@@ -1,0 +1,139 @@
+#import "../App.glo";
+#import "../Rename.glo";
+#import "../Ui.glo";
+#import "Terminal";
+#import "Terminal/Editor";
+#import "Command_Line";
+#import "String_Builder";
+#import "Strings/Utf8";
+#import "Io";
+#import "Os";
+
+check :: (condition: bool, message: str) {
+    if !condition {
+        print("FAIL: {}\n", message);
+        exit(1);
+    }
+}
+screen :: (app: *Rne_App, width: ssize = 120, height: ssize = 32) -> str {
+    canvas := Terminal_Canvas.terminal_canvas_init(width, height);
+    defer canvas.free();
+    _ = rne_render(app, &canvas);
+    out: String_Builder;
+    for y: 0..canvas.height {
+        for x: 0..canvas.width {
+            cell := canvas.cells[y * canvas.width + x];
+            if cell.width > 0 out.write_rune(cast(rune) cell.rune);
+        }
+        out.write_byte(10);
+    }
+    return out.into_string();
+}
+shows :: (app: *Rne_App, expected: str, width: ssize = 120, height: ssize = 32) {
+    text := screen(app, width, height);
+    defer text.free();
+    if !text.contains(expected) {
+        print("Expected [{}] in:\n{}", expected, text);
+        check(false, "capture preview");
+    }
+}
+key :: (app: *Rne_App, code: Terminal_Key_Code) {
+    check(!rne_key(app, .{ .code = code }, 10), "capture keys do not quit");
+}
+main :: () {
+    args := get_cmdline_args();
+    app: Rne_App;
+    defer app.free();
+    app.options.regex = true;
+    app.search.set_text("2번 배우 (?<person>\\w+) \\((\\d+)\\)\\.png");
+    app.replacement.set_text("$1_$2_${start=0,padding=1}.png");
+    check(rne_initialize(&app, args[1]), "load fixture");
+    check(app.files[1].new_name == "고세구_1_0.png", "nonmatches do not count");
+    check(app.files[2].new_name == "고세구_2_1.png", "matching files increment");
+    app.files[1].selected = false;
+    rne_recompute(&app);
+    check(app.files[2].new_name == "고세구_2_0.png", "excluded matches do not count");
+    shows(&app, "$2=\"2\"");
+    app.files[1].selected = true;
+    rne_recompute(&app);
+    for width: .[52, 68, 84, 120, 140] {
+        shows(&app, "$1=\"고세구\"", width, 20);
+        shows(&app, "F2 groups", width, 20);
+        shows(&app, "F9", width, 20);
+    }
+    key(&app, .F2);
+    shows(&app, "CAPTURE GROUPS");
+    shows(&app, "2번 배우 고세구 (1).png");
+    shows(&app, "$0 (whole match) = \"2번 배우 고세구 (1).png\"");
+    shows(&app, "$1 / ${person} = \"고세구\"");
+    shows(&app, "$2 = \"1\"");
+    key(&app, .Escape);
+    check(app.modal == .None, "Escape closes capture details");
+    app.focus = .Files;
+    app.cursor = 2;
+    shows(&app, "$2=\"2\"");
+    key(&app, .F2);
+    shows(&app, "$2 = \"2\"");
+    key(&app, .F2);
+    check(app.modal == .None, "F2 toggles capture details");
+    app.cursor = 0;
+    shows(&app, "No match in this filename.");
+    key(&app, .F2);
+    shows(&app, "1-unrelated.txt");
+    shows(&app, "No match in this filename.");
+    key(&app, .Enter);
+    app.focus = .Search;
+    app.search.set_text("^(2번) (?:배우 )(?<person>고세구)(x)?()");
+    rne_recompute(&app);
+    shows(&app, "$1=\"2번\"");
+    shows(&app, "$3=(unmatched)");
+    key(&app, .F2);
+    shows(&app, "$2 / ${person} = \"고세구\"");
+    shows(&app, "$3 = (unmatched)");
+    shows(&app, "$4 = \"\"");
+    key(&app, .Escape);
+    app.search.set_text("2번 배우 고세구 \\(\\d+\\)\\.png");
+    rne_recompute(&app);
+    shows(&app, "No capture groups; use (...) for $1.");
+    key(&app, .F2);
+    shows(&app, "$0 (whole match)");
+    shows(&app, "\\( and \\) match literal parentheses.");
+    key(&app, .Escape);
+    app.options.scope = .Extension;
+    app.search.set_text("(png)");
+    rne_recompute(&app);
+    shows(&app, "$1=\"png\"");
+    key(&app, .F2);
+    shows(&app, "First match · Extension");
+    shows(&app, "$0 (whole match) = \"png\"");
+    key(&app, .Escape);
+    app.options.scope = .Whole;
+    app.search.set_text("[");
+    rne_recompute(&app);
+    shows(&app, "Fix the Find pattern to preview captures.");
+    key(&app, .F2);
+    shows(&app, "Fix the Find pattern to preview captures.");
+    key(&app, .Escape);
+    app.search.set_text("");
+    rne_recompute(&app);
+    shows(&app, "Use (...) in Find to capture text as $1.");
+    app.options.regex = false;
+    rne_recompute(&app);
+    key(&app, .F2);
+    shows(&app, "Enable regex with Ctrl+R to inspect captures.");
+    key(&app, .Escape);
+    app.options.regex = true;
+    app.search.set_text(
+        "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(p)(q)(r)(s)(t)(u)(v)(w)(x)(y)(z)"
+    );
+    rne_recompute(&app);
+    key(&app, .F2);
+    key(&app, .End);
+    shows(&app, "$26 = \"z\"", 52, 20);
+    key(&app, .Home);
+    shows(&app, "$1 = \"a\"", 52, 20);
+    key(&app, .Page_Down);
+    shows(&app, "$10 = \"j\"", 52, 20);
+    key(&app, .Escape);
+    print("Capture UI and selection checks passed\n");
+}

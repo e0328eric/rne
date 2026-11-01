@@ -23,6 +23,7 @@
         Help;
         Confirm;
         Commands;
+        Captures;
     }
     Rne_App :: struct {
         root: str;
@@ -259,6 +260,7 @@ Rne_Journal_Entry ::: instance Freeable {
             if file.problem != .Metadata file.problem = .None;
             if !file.selected || file.problem == .Metadata continue;
             if app.regex_valid {
+                counter_used := false;
                 name := rne_new_name(
                     file,
                     search,
@@ -266,8 +268,10 @@ Rne_Journal_Entry ::: instance Freeable {
                     app.options,
                     index,
                     &app.regex,
-                    rne_dates(app, file)
+                    rne_dates(app, file),
+                    &counter_used
                 );
+                if counter_used index += 1;
                 if name == file.name name.free();
                 else {
                     file.new_name = name;
@@ -276,7 +280,6 @@ Rne_Journal_Entry ::: instance Freeable {
                     else file.target = rne_join(path_dirname(file.path), name);
                 }
             }
-            index += 1;
         }
         rne_validate(app);
     }

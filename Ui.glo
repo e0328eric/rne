@@ -1,5 +1,6 @@
 #import "App.glo";
 #import "Rename.glo";
+#import "Regex";
 #import "Terminal";
 #import "Terminal/Editor";
 #import "String_Builder";
@@ -26,6 +27,60 @@ Rne_Palette :: struct {
     selected: Terminal_Style;
     good: Terminal_Style;
     warning: Terminal_Style;
+}
+Rne_Capture_Preview :: struct {
+    file: ssize = -1;
+    subject: str;
+    captures: Regex_Captures;
+}
+// Inspect the current row. While editing, fall back to a selected matching row
+// so an unrelated first filename does not hide useful capture examples.
+rne_capture_preview :: (app: *Rne_App) -> Rne_Capture_Preview {
+    out: Rne_Capture_Preview;
+    if !app.options.regex || !app.regex_valid || app.search.text().count == 0 return out;
+    if app.cursor >= 0 && app.cursor < app.files.count {
+        out.file = app.cursor;
+        out.subject = rne_subject(&app.files[app.cursor], app.options.scope);
+        out.captures = app.regex.captures(out.subject);
+        if out.captures.matched || app.focus == .Files return out;
+    }
+    for i: 0..app.files.count {
+        if !app.files[i].selected || app.files[i].problem == .Metadata continue;
+        subject := rne_subject(&app.files[i], app.options.scope);
+        captures := app.regex.captures(subject);
+        if captures.matched return .{ i, subject, captures };
+    }
+    return .{};
+}
+rne_capture_value :: (preview: *const Rne_Capture_Preview, group: ssize) -> str {
+    if !preview.captures.span(group).found() return "(unmatched)";
+    return tprint("\"{}\"", preview.captures.group(preview.subject, group));
+}
+rne_capture_hint :: (app: *Rne_App) -> str {
+    if !app.options.regex return "Enable regex with Ctrl+R to inspect captures.";
+    if !app.regex_valid return "Fix the Find pattern to preview captures.";
+    if app.search.text().count == 0 return "Use (...) in Find to capture text as $1.";
+    if app.focus == .Files return "No match in this filename.";
+    return "No matching filename.";
+}
+rne_capture_summary :: (app: *Rne_App, canvas: *Terminal_Canvas, y: ssize, p: Rne_Palette) {
+    if !app.options.regex return;
+    preview := rne_capture_preview(app);
+    out: String_Builder;
+    defer out.free();
+    if !preview.captures.matched out.write_string(rne_capture_hint(app));
+    else if preview.captures.count == 1 {
+        out.write_string("No capture groups; use (...) for $1.  ");
+        out.writef("$0={}", rne_capture_value(&preview, 0));
+    } else {
+        out.write_string("CAPTURES  ");
+        for group: 1..preview.captures.count {
+            if group > 1 out.write_string("  ");
+            out.writef("${}={}", group, rne_capture_value(&preview, group));
+        }
+    }
+    rne_text(canvas, 2, y, canvas.width - 16, out.to_string(), p.good);
+    canvas.text(canvas.width - 11, y, "F2 groups", p.muted);
 }
 rne_style :: (r: u8, g: u8, b: u8, background: u8 = 0, bold: bool = false) -> Terminal_Style {
     bg := Terminal_Color.terminal_color_rgb(16, 22, 30);
@@ -197,6 +252,7 @@ rne_field :: (
             ),
             p.accent
         );
+        rne_capture_summary(app, canvas, layout.list.y - 2, p);
         rne_text(
             canvas,
             2,
@@ -381,12 +437,26 @@ rne_field :: (
                     app.modal = .None;
                     rne_action(app, action);
                 }
+            } else if app.modal == .Captures {
+                if key.code == .F2 || key.code == .Enter app.modal = .None;
+                if key.code == .Up app.command -= 1;
+                if key.code == .Down app.command += 1;
+                if key.code == .Page_Up app.command -= page;
+                if key.code == .Page_Down app.command += page;
+                if key.code == .Home app.command = 0;
+                if key.code == .End app.command = app.regex.groups;
+                app.command = app.command.max(0).min(app.regex.groups);
             } else if key.code == .F1 || key.code == .Enter app.modal = .None;
             return false;
         }
         if key.code == .Escape || (key.ctrl && (key.rune == 99 || key.rune == 113)) return true;
         if key.code == .F1 {
             app.modal = .Help;
+            return false;
+        }
+        if key.code == .F2 {
+            app.modal = .Captures;
+            app.command = 0;
             return false;
         }
         if key.code == .F5 {
@@ -496,6 +566,7 @@ rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
     title: str = "KEYS & VARIABLES";
     if app.modal == .Commands title = "EDIT RECIPE";
     if app.modal == .Confirm title = "REVIEW YOUR CHANGESET";
+    if app.modal == .Captures title = "CAPTURE GROUPS";
     canvas.text(x + 3, y + 1, title, rne_style(99, 218, 202, 1, true));
     if app.modal == .Confirm {
         rne_text(
@@ -528,6 +599,52 @@ rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
             "← → choose   Enter confirm   Y apply   Esc cancel",
             rne_style(127, 147, 164, 1)
         );
+    } else if app.modal == .Captures {
+        preview := rne_capture_preview(app);
+        if preview.file >= 0 rne_text(
+            canvas,
+            x + 3,
+            y + 3,
+            width - 6,
+            app.files[preview.file].relative,
+            p.panel
+        );
+        if !preview.captures.matched {
+            rne_text(canvas, x + 3, y + 5, width - 6, rne_capture_hint(app), p.panel);
+        } else {
+            rne_text(
+                canvas,
+                x + 3,
+                y + 4,
+                width - 6,
+                tprint("First match · {}", rne_scope(app.options.scope)),
+                rne_style(127, 147, 164, 1)
+            );
+            visible := (height - 9).max(1);
+            app.command = app.command.max(0).min((preview.captures.count - visible).max(0));
+            for row: 0..visible {
+                group := app.command + row;
+                if group >= preview.captures.count break;
+                label := tprint("${}", group);
+                if group == 0 label = "$0 (whole match)";
+                else if app.regex.names[group - 1].count > 0 label = tprint(
+                    "${} / ${{{}}}",
+                    group,
+                    app.regex.names[group - 1]
+                );
+                rne_text(
+                    canvas,
+                    x + 3,
+                    y + 6 + row,
+                    width - 6,
+                    tprint("{} = {}", label, rne_capture_value(&preview, group)),
+                    p.panel
+                );
+            }
+            hint := "↑ ↓ / PgUp PgDn scroll · F2 / Esc close";
+            if preview.captures.count == 1 hint = "Use (...) for $1; \\( and \\) match literal parentheses.";
+            rne_text(canvas, x + 3, y + height - 2, width - 6, hint, rne_style(127, 147, 164, 1));
+        }
     } else if app.modal == .Commands {
         labels := .[
             "Regex mode",
@@ -586,6 +703,7 @@ rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
             "A / N / I         Select all / none / invert",
             "Ctrl+P            All recipe options",
             "F5                Refresh directory",
+            "F2                Inspect numbered regex captures",
             "F9                Review before applying",
             "Esc               Close overlay; otherwise exit",
             "",

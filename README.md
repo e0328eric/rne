@@ -55,6 +55,7 @@ build/rne --snapshot-ansi --width 120 --height 32 /path/to/files
 | Left/Right, Enter in review | Choose and activate Cancel or Apply |
 | Y / N in review | Apply / cancel |
 | F1 | Show keys and variables |
+| F2 | Inspect numbered regex captures; arrows / Page Up/Down scroll |
 | Esc | Dismiss the current overlay, or exit when none is open |
 | Ctrl+Q / Ctrl+C | Dismiss an overlay, or exit |
 
@@ -69,8 +70,21 @@ provide bracketed-paste boundaries; see the [Terminal notes](../../std/Terminal/
 
 Literal, case-insensitive, all-match replacement is the default. `-E` enables
 [Regex](../../std/Regex/README.md), with `$0`, `$1`, `${name}`, and `$$` capture
-expansions. Use braces to separate a capture from adjacent letters:
-`${1}_photo`, rather than `$1_photo`. Literal mode keeps capture notation literal.
+expansions. Numbered references consume only digits, so `$1_photo` and
+`${1}_photo` both append `_photo` to capture 1. Use `${1}2` to append a literal
+`2`; `$12` refers to capture 12. Literal mode keeps capture notation literal.
+
+Regex mode shows a live numbered capture summary. F2 opens the filename and
+first match, including `$0` (the whole match), each numbered group, and named
+aliases. Move through the file list to inspect another filename. While editing,
+an unrelated current row falls back to the first selected matching file. The
+preview respects the name/extension scope and distinguishes unmatched optional
+groups from empty captures.
+
+Parentheses create captures; escaped parentheses match literal characters. For
+example, Find `2번 배우 고세구 \((\d+)\)\.png` and Replace
+`2번_배우_고세구_$1.png` turns `2번 배우 고세구 (12).png` into
+`2번_배우_고세구_12.png`. With `\(\d+\)` instead, there is no `$1` group.
 
 `--scope whole|name|ext` selects the part to transform. Leading dots belong to
 the filename; directories have no extension. `--case` supports `keep`, `lower`,
@@ -98,9 +112,13 @@ capture expansions.
 
 `--enumerate` appends a counter before the extension unless the replacement
 already supplies a counter. `--start`, `--increment`, and `--padding` configure
-it (defaults: 1, 1, 2). Counter indices follow the selected rows in the displayed
-natural order, with directories first. Very large numeric runs sort without
-integer overflow. Counters saturate at the signed 64-bit range.
+it (defaults: 1, 1, 2). Replacement counters advance only for selected files
+matching Find within the chosen scope, in displayed natural order with
+directories first. Unrelated and excluded rows do not consume numbers. A
+matching file that already has its resulting name still consumes its number.
+`${start=0}` therefore starts at `00` (or `0` with `padding=1`). Automatic
+appended counters cover all selected entries. Very large numeric runs sort
+without integer overflow. Counters saturate at the signed 64-bit range.
 
 `-r` scans subdirectories without following symlinks. `--files-only` and
 `--dirs-only` filter entries. Symlinks, including dangling ones, are renamed as
@@ -123,6 +141,17 @@ Windows collision keys are conservatively case-insensitive even on directories
 configured for case-sensitive names.
 
 ## Verification
+
+Run the replacement and capture-preview regressions from this checkout:
+
+```sh
+python3 tests/check.py /path/to/glosso --std /path/to/glosso/std
+```
+
+These build in a temporary directory and check counters across mixed files,
+capture expansion, preview/apply agreement, selection changes, and responsive
+capture details and keyboard controls. The Glosso repository also provides the
+broader filesystem and terminal harnesses:
 
 ```sh
 python3 tests/examples/rne.py build/bin/glosso

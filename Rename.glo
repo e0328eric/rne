@@ -107,6 +107,14 @@ Rne_Entry ::: instance Freeable {
         }
         return name.count;
     }
+    // Borrow the same part of the filename for replacement and capture previews.
+    rne_subject :: (file: *const Rne_Entry, scope: Rne_Scope) -> str {
+        if scope == .Whole return file.name;
+        split := rne_extension(file.name, file.directory);
+        if scope == .Name return file.name[..split];
+        if split < file.name.count return file.name[split + 1..];
+        return "";
+    }
     rne_counter :: (start: s64, increment: s64, index: ssize) -> s64 {
         value := cast(s128) start + cast(s128) increment * cast(s128) index;
         if value > 9223372036854775807 return 9223372036854775807;
@@ -193,6 +201,16 @@ Rne_Entry ::: instance Freeable {
             }
             begin := i;
             i += 1;
+            // Delimit numbered captures before expanding variables, so suffixes
+            // and adjacent counters cannot become part of the capture name.
+            if options.regex && i < input.count && input[i] >= 48 && input[i] <= 57 {
+                first := i;
+                while i < input.count && input[i] >= 48 && input[i] <= 57 i += 1;
+                out.write_string("${");
+                out.write_string(input[first..i]);
+                out.write_byte(125);
+                continue;
+            }
             value: String_Builder;
             defer value.free();
             expanded := false;
@@ -324,16 +342,16 @@ Rne_Entry ::: instance Freeable {
         options: Rne_Options,
         index: ssize,
         regex: *Regex,
-        dates: Rne_Dates
+        dates: Rne_Dates,
+        counter_used: ?*bool = null
     ) -> str {
+        if #pattern.Some(used) = counter_used used.* = false;
         if search.count == 0 && !options.enumerate && options.casing == .Keep return file.name.clone();
         split := rne_extension(file.name, file.directory);
         stem := file.name[..split];
         extension: str = "";
         if split < file.name.count extension = file.name[split + 1..];
-        target := file.name;
-        if options.scope == .Name target = stem;
-        if options.scope == .Extension target = extension;
+        target := rne_subject(file, options.scope);
         has_counter := false;
         variables := rne_variables(replacement, file, options, index, dates, &has_counter);
         defer variables.free();
@@ -344,6 +362,12 @@ Rne_Entry ::: instance Freeable {
             replaced = regex.replace(target, variables, limit, !options.regex);
         } else replaced = target.clone();
         defer replaced.free();
+        if #pattern.Some(used) = counter_used {
+            // A matching file consumes its number even if it already has the
+            // resulting name. Unrelated rows must not offset the first counter.
+            used.* = (options.enumerate && !has_counter) ||
+                (has_counter && search.count > 0 && regex.is_match(target));
+        }
         cased := rne_case(replaced, options.casing);
         defer cased.free();
         if options.scope == .Whole {
