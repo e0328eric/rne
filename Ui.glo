@@ -359,12 +359,12 @@ rne_field :: (
             canvas,
             2,
             height - 2,
-            width - 23,
+            width - 25,
             "Tab focus   Space select   Ctrl+P commands   F1 help   Esc exit",
             p.base
         );
-        else rne_text(canvas, 2, height - 2, width - 21, "Tab focus · ^P menu · F1 help", p.base);
-        canvas.text(width - 19, height - 2, "F9  Review & apply", p.accent);
+        else rne_text(canvas, 2, height - 2, width - 25, "Tab focus · ^P menu · F1 help", p.base);
+        canvas.text(width - 23, height - 2, "F9 / Enter  Review", p.accent);
         if app.modal != .None {
             rne_overlay(app, canvas, p);
             return .{ -1, -1 };
@@ -463,8 +463,7 @@ rne_field :: (
             _ = rne_refresh(app);
             return false;
         }
-        if key.code == .F9 {
-            app.command = 0;
+        if key.code == .F9 || key.code == .Enter {
             rne_request_apply(app);
             return false;
         }
@@ -503,7 +502,7 @@ rne_field :: (
             if key.code == .Home app.cursor = 0;
             if key.code == .End app.cursor = app.files.count - 1;
             app.cursor = app.cursor.max(0).min((app.files.count - 1).max(0));
-            if (key.code == .Character && key.rune == 32) || key.code == .Enter {
+            if key.code == .Character && key.rune == 32 {
                 if app.files.count > 0 {
                     app.files[app.cursor].selected = !app.files[app.cursor].selected;
                     rne_recompute(app);
@@ -514,10 +513,6 @@ rne_field :: (
                 if key.rune == 110 rne_select(app, 0);
                 if key.rune == 105 rne_select(app, 2);
             }
-            return false;
-        }
-        if key.code == .Enter {
-            app.focus = cast(Rne_Focus)(cast(ssize) app.focus + 1);
             return false;
         }
         if key.ctrl && key.rune == 106 return false;
@@ -699,12 +694,12 @@ rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
         lines := .[
             "Tab / Shift+Tab   Search → Replace → Files",
             "Arrows / PgUp / PgDn / Home / End   Navigate",
-            "Space / Enter     Toggle selected file",
+            "Space             Toggle selected file",
             "A / N / I         Select all / none / invert",
             "Ctrl+P            All recipe options",
             "F5                Refresh directory",
             "F2                Inspect numbered regex captures",
-            "F9                Review before applying",
+            "F9 / Enter        Review before applying",
             "Esc               Close overlay; otherwise exit",
             "",
             "$1  ${name}       Regex capture groups · $$ literal $",

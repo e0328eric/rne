@@ -388,6 +388,9 @@ Rne_Journal_Entry ::: instance Freeable {
         rne_recompute(app);
     }
     rne_request_apply :: (app: *Rne_App) {
+        // Review the current editor contents, including edits since the last preview.
+        rne_recompute(app);
+        app.command = 0;
         if app.scan_error || !app.regex_valid || app.blocked > 0 {
             rne_status(app, "Resolve the errors before applying this plan.");
             return;

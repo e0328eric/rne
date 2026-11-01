@@ -1,7 +1,7 @@
 # rne — Renaming studio
 
 A Glosso port of the sibling [`rne`](../../../rne) bulk renamer, using the
-standard `Terminal`, `Terminal/Editor`, `Regex`, `Time`, and `File_System`
+standard `Command_Line`, `Terminal`, `Terminal/Editor`, `Regex`, `Time`, and `File_System`
 modules. The application and regex engine are implemented in Glosso; Rust is
 used only by the optional regex comparison harness.
 
@@ -36,14 +36,21 @@ build/rne --snapshot-ansi --width 120 --height 32 /path/to/files
 `--preview`, `--json`, and snapshots never rename files. `--apply` requires
 `--yes` and cannot be combined with a preview mode.
 
+Arguments and help use the standard `Command_Line` specification. Pass option
+values as separate arguments (`--search draft`); short flags can be grouped
+(`-rEs 'draft(\d+)'`). Use `--` before a directory beginning with `-`.
+String option values beginning with `-` (other than a single `-`) are rejected
+by the standard parser; use the interactive editors for those search or
+replacement strings. Repeating a switch keeps it enabled, and repeated value
+options use their last value. `--files-only` and `--dirs-only` cannot be combined.
+
 ## Controls
 
 | Key | Action |
 | --- | --- |
 | Tab / Shift+Tab | Focus Find, Replace, or the file list |
-| Enter in an editor | Move to the next panel |
 | Arrows, Home/End, Page Up/Down | Edit text or navigate the file list |
-| Space / Enter in the list | Include or exclude the current entry |
+| Space in the list | Include or exclude the current entry |
 | A / N / I in the list | Select all / none / invert |
 | Ctrl+P | Open the recipe command palette |
 | Ctrl+R / Ctrl+S / Ctrl+G | Regex / case sensitivity / all versus first match |
@@ -51,7 +58,7 @@ build/rne --snapshot-ansi --width 120 --height 32 /path/to/files
 | Ctrl+U / Ctrl+F / Ctrl+D | Recursion / include files / include folders |
 | Ctrl+W / Ctrl+K in an editor | Delete the preceding word / delete to the end |
 | F5 | Refresh directory and metadata |
-| F9 | Review the changeset; Cancel is initially selected |
+| F9 / Enter | Review the current edits from any panel; Cancel is initially selected |
 | Left/Right, Enter in review | Choose and activate Cancel or Apply |
 | Y / N in review | Apply / cancel |
 | F1 | Show keys and variables |
@@ -142,16 +149,18 @@ configured for case-sensitive names.
 
 ## Verification
 
-Run the replacement and capture-preview regressions from this checkout:
+Run the CLI, replacement and capture-preview regressions from this checkout:
 
 ```sh
 python3 tests/check.py /path/to/glosso --std /path/to/glosso/std
 ```
 
-These build in a temporary directory and check counters across mixed files,
-capture expansion, preview/apply agreement, selection changes, and responsive
-capture details and keyboard controls. The Glosso repository also provides the
-broader filesystem and terminal harnesses:
+These build in a temporary directory and check CLI defaults, aliases, repeated
+flags, invalid arguments, counters across mixed files, capture expansion,
+preview/apply agreement, selection changes, and responsive capture details and
+keyboard controls. On POSIX, a terminal test also checks Korean typing and paste,
+F9 / Enter review, cancellation, confirmation, and terminal restoration. The
+Glosso repository also provides the broader filesystem and terminal harnesses:
 
 ```sh
 python3 tests/examples/rne.py build/bin/glosso

@@ -1,13 +1,128 @@
 #!/usr/bin/env python3
-"""Replacement and capture UI regressions; needs Glosso and Python's stdlib."""
+"""CLI, replacement and capture UI regressions; needs Glosso and Python's stdlib."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def check_command_line(exe, temporary):
+    root = temporary / 'cli'
+    root.mkdir()
+    originals = {'draft1.txt': 'one', 'DRAFT2.TXT': 'two', 'folder/draft3.txt': 'three'}
+    for name, content in originals.items():
+        path = root / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(content)
+
+    def run(*args, status=0, cwd=root):
+        result = subprocess.run(
+            [str(exe), *args], cwd=cwd, text=True, capture_output=True, timeout=10,
+        )
+        assert result.returncode == status, (args, result.returncode, result.stdout, result.stderr)
+        return result.stdout
+
+    def plan(*args):
+        data = json.loads(run('--json', *args))
+        assert data['blocked'] == 0, data
+        return {entry['from']: entry['to'] for entry in data['entries']}
+
+    help_text = run('--help')
+    assert run('-h') == help_text
+    assert 'Usage: rne [flags] [DIRECTORY]' in help_text
+    assert '-r, --recursive' in help_text and '--increment <number>' in help_text
+    assert 'Replacement: $1, ${name}' in help_text
+    defaults = json.loads(run('--json'))
+    assert defaults['root'] == '.' and defaults['selected'] == 3, defaults
+    assert all(entry['to'] is None for entry in defaults['entries']), defaults
+
+    # Flags may follow the directory; the last short flag in a group may take a value.
+    args = ['--search', 'draft', '--replace', 'final']
+    assert plan(*args) == plan(str(root), *args)
+    assert plan('-rEs', r'draft(\d)', '-w', 'final-$1', '--files-only') == {
+        'draft1.txt': 'final-1.txt', 'DRAFT2.TXT': 'final-2.TXT',
+        'folder/draft3.txt': 'final-3.txt',
+    }
+    assert plan('--dirs-only', '-s', 'folder', '-w', 'renamed') == {'folder': 'renamed'}
+    assert plan('--search', 'unused', '-s', 'DRAFT', '--replace', '', '--case-sensitive') == {
+        'folder': None, 'draft1.txt': None, 'DRAFT2.TXT': '2.TXT',
+    }
+
+    # Repeated switches keep their meaning, including repeated short aliases.
+    assert plan('-rrEE', '-s', r'draft(\d)', '-w', 'final-$1', '--files-only',
+                '--files-only', '--case-sensitive', '--case-sensitive') == {
+        'draft1.txt': 'final-1.txt', 'DRAFT2.TXT': None,
+        'folder/draft3.txt': 'final-3.txt',
+    }
+    assert plan('--json', *args) == plan(*args)
+    assert 'final1.txt' in run('--preview', '--preview', *args)
+    assert plan('--files-only', '--enumerate', '--enumerate') == {
+        'draft1.txt': 'draft101.txt', 'DRAFT2.TXT': 'DRAFT202.TXT',
+    }
+    for start, increment, padding in [(-2, -1, 3), (0, 0, 1), (1, 1, 64),
+                                      (-(2**63), 0, 1), (2**63 - 1, 0, 1)]:
+        actual = plan('--files-only', '--enumerate', '--start', str(start),
+                      '--increment', str(increment), '--padding', str(padding))
+        for index, name in enumerate(['draft1.txt', 'DRAFT2.TXT']):
+            path = Path(name)
+            assert actual[name] == f'{path.stem}{start + index * increment:0{padding}}{path.suffix}'
+
+    snapshot = run('--snapshot')
+    assert len(snapshot.splitlines()) == 32
+    assert all(len(row) == 120 for row in snapshot.splitlines())
+    assert len(run('--snapshot', '--width', '52', '--height', '20').splitlines()) == 20
+    assert run('--snapshot', '--width', '1', '--height', '1') == ' \n'
+    assert '\x1b[' in run('--snapshot-ansi', '--width', '52', '--height', '20')
+
+    # A bare dash is a directory; -- allows a directory that looks like an option.
+    for name, directory_args in [('-', ['-']), ('--help', ['--', '--help'])]:
+        directory = temporary / name
+        directory.mkdir()
+        (directory / 'item.txt').touch()
+        data = json.loads(run('--json', *directory_args, cwd=temporary))
+        assert data['root'] == name and data['entries'][0]['from'] == 'item.txt', data
+
+    invalid = [
+        (['--unknown'], 'unknown flag'),
+        (['-z'], 'unknown short flag'),
+        (['-sr', 'draft'], 'only the last short flag may take values'),
+        (['--search', '--preview'], 'flag needs a value'),
+        (['--search', '-draft'], 'flag needs a value'),
+        (['--width=52'], 'unknown flag'),
+        (['one', 'two'], 'too many positional arguments'),
+        (['--scope', 'bad'], 'scope must be whole, name or ext'),
+        (['--case', 'bad'], 'unknown case transform'),
+        (['--apply'], '--apply requires --yes'),
+        (['--files-only', '--dirs-only'], '--files-only cannot be combined with --dirs-only'),
+        (['--dirs-only', '--files-only'], '--files-only cannot be combined with --dirs-only'),
+    ]
+    value_flags = ['-s', '-w', '--search', '--replace', '--scope', '--case',
+                   '--start', '--increment', '--padding', '--width', '--height']
+    invalid += [([flag], 'flag needs a value') for flag in value_flags]
+    for flag in ['--start', '--increment', '--padding', '--width', '--height']:
+        for value in ['not-a-number', '1.5', str(2**63), str(-(2**63) - 1)]:
+            invalid.append(([flag, value], 'invalid value for parameter type'))
+    for flag, limit, message in [('--padding', 64, 'padding must be 1..64'),
+                                 ('--width', 500, 'dimensions must be 1..500'),
+                                 ('--height', 500, 'dimensions must be 1..500')]:
+        for value in ['-1', '0', str(limit + 1)]:
+            invalid.append(([flag, value], message))
+    for mode in ['--preview', '--json', '--snapshot', '--snapshot-ansi']:
+        invalid.append((['--apply', '--yes', mode, mode],
+                        '--apply cannot be combined with a preview mode'))
+    for args, message in invalid:
+        assert message in run(*args, status=2), args
+
+    assert {str(p.relative_to(root)): p.read_text() for p in root.rglob('*') if p.is_file()} == originals
+    run('--apply', '--apply', '--yes', '--yes', '-s', 'draft', '-w', 'final')
+    assert (root / 'final1.txt').read_text() == 'one'
+    assert (root / 'final2.TXT').read_text() == 'two'
+    assert (root / 'folder/draft3.txt').read_text() == 'three'
 
 
 def check_replacements(exe, temporary):
@@ -109,6 +224,87 @@ def check_replacements(exe, temporary):
     }
 
 
+def check_review_terminal(exe, temporary):
+    if os.name != 'posix':
+        return
+    import fcntl
+    import pty
+    import re
+    import select
+    import struct
+    import termios
+    import time
+
+    root = temporary / 'terminal-review'
+    root.mkdir()
+    original = root / '2번 배우 고세구 (1).png'
+    original.write_text('unchanged contents')
+    master, slave = pty.openpty()
+    previous_mode = termios.tcgetattr(slave)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 32, 120, 0, 0))
+    process = subprocess.Popen(
+        [str(exe), '-w', 'final', str(root)], stdin=slave, stdout=slave, stderr=slave,
+        env={**os.environ, 'TERM': 'xterm-256color'},
+    )
+    pending = b''
+    frame = re.compile(rb'\x1b\[1;1H(.*?)\x1b\[\?25[hl]', re.DOTALL)
+    controls = re.compile(rb'\x1b\[[0-?]*[ -/]*[@-~]')
+
+    def wait_for(predicate):
+        nonlocal pending
+        deadline = time.monotonic() + 5
+        last = ''
+        while time.monotonic() < deadline:
+            match = frame.search(pending)
+            if match:
+                last = controls.sub(b'', match[1]).decode('utf-8')
+                pending = pending[match.end():]
+                if predicate(last):
+                    return last
+                continue
+            assert process.poll() is None, (process.returncode, last, pending)
+            if select.select([master], [], [], 0.05)[0]:
+                pending += os.read(master, 65536)
+        raise AssertionError(('terminal did not reach expected state', last, pending))
+
+    def send(data):
+        os.write(master, data)
+
+    try:
+        wait_for(lambda text: 'RENAMING STUDIO' in text)
+        # Find is initially focused. Exercise Korean UTF-8 input and the F9 sequence.
+        search = '2번 배우 고세구'.encode('utf-8')
+        send(search)
+        wait_for(lambda text: 'final (1).png' in text)
+        for shortcut in [b'\x1b[20~', b'\r']:
+            send(shortcut)
+            wait_for(lambda text: 'REVIEW YOUR CHANGESET' in text)
+            assert original.read_text() == 'unchanged contents'
+            send(b'\x1b[200~\r\x1b[201~')
+            wait_for(lambda text: 'REVIEW YOUR CHANGESET' in text)
+            assert original.exists(), 'pasted Enter applied a rename'
+            send(b'\r')
+            wait_for(lambda text: 'REVIEW YOUR CHANGESET' not in text)
+            assert original.exists(), 'Enter must cancel the default review selection'
+
+        # A pasted Find edit is included in the next review.
+        send(b'\x1b[H\x0b\x1b[200~' + search + b'\x1b[201~\x1b[20~')
+        wait_for(lambda text: 'REVIEW YOUR CHANGESET' in text)
+        send(b'\x1b[C\r')
+        wait_for(lambda text: 'Renamed 1 items' in text)
+        assert not original.exists()
+        assert (root / 'final (1).png').read_text() == 'unchanged contents'
+        send(b'\x11')
+        assert process.wait(timeout=5) == 0
+        assert termios.tcgetattr(slave) == previous_mode, 'terminal mode was not restored'
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+        os.close(slave)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', nargs='?', default='glosso')
@@ -125,6 +321,7 @@ def main():
                 command += ['--std', str(args.std.resolve())]
             subprocess.run(command, check=True, cwd=ROOT)
             binaries.append(executable)
+        check_command_line(binaries[0], temporary)
         check_replacements(binaries[0], temporary)
         ui_root = temporary / 'ui'
         ui_root.mkdir()
@@ -132,7 +329,8 @@ def main():
                      '2번 배우 고세구 (2).png', 'abcdefghijklmnopqrstuvwxyz.png']:
             (ui_root / name).touch()
         subprocess.run([str(binaries[1]), str(ui_root)], check=True)
-    print('Replacement, counter, capture preview and keyboard checks passed')
+        check_review_terminal(binaries[0], temporary)
+    print('CLI, replacement, counter, capture preview, review shortcuts and terminal checks passed')
 
 
 if __name__ == '__main__':

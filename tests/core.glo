@@ -38,10 +38,62 @@ shows :: (app: *Rne_App, expected: str, width: ssize = 120, height: ssize = 32) 
     }
 }
 key :: (app: *Rne_App, code: Terminal_Key_Code) {
-    check(!rne_key(app, .{ .code = code }, 10), "capture keys do not quit");
+    check(!rne_key(app, .{ .code = code }, 10), "UI keys do not quit");
+}
+check_review_keys :: (root: str) {
+    app: Rne_App;
+    defer app.free();
+    check(rne_initialize(&app, root), "load review fixture");
+    app.replacement.set_text("renamed");
+    for focus: .[Rne_Focus.Search, Rne_Focus.Replace, Rne_Focus.Files] {
+        for shortcut: .[Terminal_Key_Code.F9, Terminal_Key_Code.Enter] {
+            app.search.set_text("no matching files");
+            rne_recompute(&app);
+            check(app.pending == 0, "initial preview has no changes");
+            // Review must pick up editor changes even before a preview refresh.
+            app.search.set_text("2번");
+            app.focus = focus;
+            app.command = 1;
+            selected := app.selected;
+            key(&app, shortcut);
+            check(app.modal == .Confirm && app.pending == 2, "review uses the current Find text");
+            check(app.command == 0, "review starts with Cancel selected");
+            check(app.focus == focus, "review does not change focus");
+            check(app.selected == selected, "Enter does not toggle file selection");
+            for width: .[52, 84, 120] {
+                shows(&app, "REVIEW YOUR CHANGESET", width, 20);
+                shows(&app, "F9 / Enter", width, 20);
+            }
+            check(!rne_key(&app, .{ .code = .Enter, .rune = 13, .pasted = true }, 10),
+                "pasted Enter does not quit");
+            check(app.modal == .Confirm && app.last_applied == 0, "pasted Enter cannot confirm");
+            key(&app, .Enter);
+            check(app.modal == .None && app.last_applied == 0, "default Enter cancels review");
+        }
+    }
+    for shortcut: .[Terminal_Key_Code.F9, Terminal_Key_Code.Enter] {
+        app.focus = .Search;
+        app.options.regex = true;
+        app.search.set_text("2번");
+        app.replacement.set_text("renamed");
+        rne_recompute(&app);
+        app.search.set_text("[");
+        key(&app, shortcut);
+        check(app.modal == .None && !app.regex_valid, "invalid edits cannot review a stale plan");
+        app.search.set_text("2번");
+        app.replacement.set_text("../invalid");
+        key(&app, shortcut);
+        check(app.modal == .None && app.blocked == 2, "blocked edits cannot open review");
+        app.search.set_text("no matching files");
+        key(&app, shortcut);
+        check(app.modal == .None && app.status == "No changes to apply.", "empty plans report why");
+        check(!rne_key(&app, .{ .code = shortcut, .pasted = true }, 10), "pasted shortcuts do not quit");
+        check(app.modal == .None, "pasted shortcuts cannot open review");
+    }
 }
 main :: () {
     args := get_cmdline_args();
+    check_review_keys(args[1]);
     app: Rne_App;
     defer app.free();
     app.options.regex = true;
@@ -135,5 +187,5 @@ main :: () {
     key(&app, .Page_Down);
     shows(&app, "$10 = \"j\"", 52, 20);
     key(&app, .Escape);
-    print("Capture UI and selection checks passed\n");
+    print("Review shortcuts, capture UI and selection checks passed\n");
 }

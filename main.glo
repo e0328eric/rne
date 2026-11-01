@@ -10,12 +10,33 @@
 #import "Strings/Utf8";
 #import "Serialization/Json";
 
-rne_help :: () {
-    print(
-        "{}",
-        "rne [OPTIONS] [DIRECTORY]\n\nInteractive bulk renaming with live preview. F9 reviews a plan before applying.\n\n  -r, --recursive           Include subdirectories (never follow symlinks)\n  -E, --regex               Use regular expressions\n  -s, --search TEXT         Initial search\n  -w, --replace TEXT        Initial replacement\n      --case-sensitive      Match case (default: ignore case)\n      --first               Replace only the first match\n      --scope whole|name|ext Select the part to transform\n      --case keep|lower|upper|title|sentence\n      --enumerate           Append an automatic counter\n      --start N --increment N --padding N\n      --files-only          Exclude directories\n      --dirs-only           Exclude files\n      --preview             Print the plan without changing files\n      --json                Print the plan as JSON (implies --preview)\n      --apply --yes         Apply a validated plan without the TUI\n      --snapshot            Print a plain-text UI preview\n      --snapshot-ansi       Print a styled UI preview\n      --width N --height N  Snapshot dimensions (default: 120 × 32)\n  -h, --help                Show this help\n\nReplacement: $1, ${name}, $YYYY, $m.YYYY, $c.YYYY, $parent, $##,\n             ${start=245,padding=4,increment=1}\n"
-    );
-}
+rne_command :: #string
+    \\#@rne | Interactive bulk renaming with live preview. F9 / Enter reviews a plan before applying. {
+    \\    *DIRECTORY: string = . | Directory to open (default: current directory);
+    \\    -recursive,r: bool | Include subdirectories (never follow symlinks);
+    \\    -regex,E: bool | Use regular expressions;
+    \\    -search,s: string | Initial search;
+    \\    -replace,w: string | Initial replacement;
+    \\    -case-sensitive,: bool | Match case (default: ignore case);
+    \\    -first,: bool | Replace only the first match;
+    \\    -scope,: string = whole | Part to transform: whole, name or ext;
+    \\    -case,: string = keep | Case transform: keep, lower, upper, title or sentence;
+    \\    -enumerate,: bool | Append an automatic counter;
+    \\    -start,: number = 1 | Initial counter value (default: 1);
+    \\    -increment,: number = 1 | Counter increment (default: 1);
+    \\    -padding,: number = 2 | Counter padding: 1..64 (default: 2);
+    \\    -files-only,: bool | Exclude directories;
+    \\    -dirs-only,: bool | Exclude files;
+    \\    -preview,: bool | Print the plan without changing files;
+    \\    -json,: bool | Print the plan as JSON (implies --preview);
+    \\    -apply,: bool | Apply a validated plan without the TUI (requires --yes);
+    \\    -yes,: bool | Confirm noninteractive application;
+    \\    -snapshot,: bool | Print a plain-text UI preview;
+    \\    -snapshot-ansi,: bool | Print a styled UI preview;
+    \\    -width,: number = 120 | Snapshot width: 1..500 (default: 120);
+    \\    -height,: number = 32 | Snapshot height: 1..500 (default: 32);
+    \\}
+;
 rne_json_string :: (out: *String_Builder, text: str) {
     value := json_serialize(text).unwrap_or("null".clone());
     defer value.free();
@@ -153,167 +174,141 @@ rne_run :: (app: *Rne_App) -> s32 {
     return 0;
 }
 main :: () -> s32 {
-    args := get_cmdline_args();
+    parsed := Command_Line.parse(rne_command);
+    #pattern.Ok(line) := parsed else {
+        if #pattern.Err(error) = parsed {
+            print("rne: {}", error.message);
+            if error.token.count > 0 print(": {}", error.token);
+            print("\n");
+        }
+        return 2;
+    }
+    defer line.free();
+    if line.is_help {
+        print("{}", line.help_msg);
+        print(
+            "{}",
+            "\nReplacement: $1, ${name}, $YYYY, $m.YYYY, $c.YYYY, $parent, $##,\n             ${start=245,padding=4,increment=1}\n"
+        );
+        return 0;
+    }
+    command := line.active_command();
+    #pattern.Some(directory) := command.argument("DIRECTORY") else {
+        return 2;
+    }
+    #pattern.String(root) := directory.value else {
+        return 2;
+    }
     app: Rne_App;
     defer app.free();
-    root: str = ".";
-    have_root := false;
     preview := false;
     json := false;
     apply := false;
     yes := false;
     snapshot := false;
     ansi := false;
-    width: ssize = 120;
-    height: ssize = 32;
-    positional := false;
-    i: ssize = 1;
-    while i < args.count {
-        arg := args[i];
-        i += 1;
-        if positional || !arg.starts_with("-") {
-            if have_root {
-                print("rne: only one directory can be opened\n");
-                return 2;
-            }
-            root = arg;
-            have_root = true;
-            continue;
-        }
-        if arg == {
-            case "--";
-                positional = true;
-                continue;
-            case "-";
-                if have_root {
-                    print("rne: only one directory can be opened\n");
-                    return 2;
-                }
-                root = arg;
-                have_root = true;
-                continue;
-            case "--help", "-h";
-                rne_help();
-                return 0;
-            case "--recursive", "-r";
-                app.options.recursive = true;
-                continue;
-            case "--regex", "-E";
-                app.options.regex = true;
-                continue;
-            case "--case-sensitive";
-                app.options.sensitive = true;
-                continue;
-            case "--first";
-                app.options.all = false;
-                continue;
-            case "--enumerate";
-                app.options.enumerate = true;
-                continue;
-            case "--files-only";
-                app.options.files = true;
-                app.options.folders = false;
-                continue;
-            case "--dirs-only";
-                app.options.files = false;
-                app.options.folders = true;
-                continue;
-            case "--preview";
-                preview = true;
-                continue;
-            case "--json";
-                json = true;
-                preview = true;
-                continue;
-            case "--apply";
-                apply = true;
-                continue;
-            case "--yes";
-                yes = true;
-                continue;
-            case "--snapshot";
-                snapshot = true;
-                continue;
-            case "--snapshot-ansi";
-                snapshot = true;
-                ansi = true;
-                continue;
-            case "--search", "-s", "--replace", "-w", "--scope", "--case", "--start", "--increment", "--padding", "--width", "--height";
-            else;
-                print("rne: unknown option {}\n", arg);
-                return 2;
-        }
-        if i == args.count {
-            print("rne: missing value for {}\n", arg);
-            return 2;
-        }
-        value := args[i];
-        i += 1;
-        if arg == {
-            case "--search", "-s";
-                app.search.set_text(value);
-            case "--replace", "-w";
-                app.replacement.set_text(value);
-            case "--scope";
-                if value == {
-                    case "whole";
-                        app.options.scope = .Whole;
-                    case "name";
-                        app.options.scope = .Name;
-                    case "ext";
-                        app.options.scope = .Extension;
+    width: ssize;
+    height: ssize;
+    for flag: command.flags {
+        if flag.value == {
+            case .Bool;
+                // rne switches enable a mode even when repeated. The standard
+                // parser toggles boolean values, so use their presence instead.
+                if !flag.present continue;
+                if flag.long == {
+                    case "recursive";
+                        app.options.recursive = true;
+                    case "regex";
+                        app.options.regex = true;
+                    case "case-sensitive";
+                        app.options.sensitive = true;
+                    case "first";
+                        app.options.all = false;
+                    case "enumerate";
+                        app.options.enumerate = true;
+                    case "files-only";
+                        app.options.folders = false;
+                    case "dirs-only";
+                        app.options.files = false;
+                    case "preview";
+                        preview = true;
+                    case "json";
+                        json = true;
+                        preview = true;
+                    case "apply";
+                        apply = true;
+                    case "yes";
+                        yes = true;
+                    case "snapshot";
+                        snapshot = true;
+                    case "snapshot-ansi";
+                        snapshot = true;
+                        ansi = true;
                     else;
-                        print("rne: scope must be whole, name or ext\n");
-                        return 2;
                 }
-            case "--case";
-                if value == {
-                    case "keep";
-                        app.options.casing = .Keep;
-                    case "lower";
-                        app.options.casing = .Lower;
-                    case "upper";
-                        app.options.casing = .Upper;
-                    case "title";
-                        app.options.casing = .Title;
-                    case "sentence";
-                        app.options.casing = .Sentence;
-                    else;
-                        print("rne: unknown case transform {}\n", value);
-                        return 2;
-                }
-            else;
-                if from_string(s64, value) == {
-                    case null;
-                        print("rne: invalid integer for {}\n", arg);
-                        return 2;
-                    case .Some(number);
-                        if arg == {
-                            case "--start";
-                                app.options.start = number;
-                            case "--increment";
-                                app.options.increment = number;
-                            case "--padding";
-                                if number < 1 || number > 64 {
-                                    print("rne: padding must be 1..64\n");
-                                    return 2;
-                                }
-                                app.options.padding = cast(ssize) number;
-                            case "--width", "--height";
-                                if number < 1 || number > 500 {
-                                    print("rne: dimensions must be 1..500\n");
-                                    return 2;
-                                }
-                                if arg == {
-                                    case "--width";
-                                        width = cast(ssize) number;
-                                    else;
-                                        height = cast(ssize) number;
-                                }
+            case .String(value);
+                if flag.long == {
+                    case "search";
+                        app.search.set_text(value);
+                    case "replace";
+                        app.replacement.set_text(value);
+                    case "scope";
+                        if value == {
+                            case "whole";
+                                app.options.scope = .Whole;
+                            case "name";
+                                app.options.scope = .Name;
+                            case "ext";
+                                app.options.scope = .Extension;
                             else;
+                                print("rne: scope must be whole, name or ext\n");
+                                return 2;
                         }
+                    case "case";
+                        if value == {
+                            case "keep";
+                                app.options.casing = .Keep;
+                            case "lower";
+                                app.options.casing = .Lower;
+                            case "upper";
+                                app.options.casing = .Upper;
+                            case "title";
+                                app.options.casing = .Title;
+                            case "sentence";
+                                app.options.casing = .Sentence;
+                            else;
+                                print("rne: unknown case transform {}\n", value);
+                                return 2;
+                        }
+                    else;
                 }
+            case .Number(number);
+                if flag.long == {
+                    case "start";
+                        app.options.start = number;
+                    case "increment";
+                        app.options.increment = number;
+                    case "padding";
+                        if number < 1 || number > 64 {
+                            print("rne: padding must be 1..64\n");
+                            return 2;
+                        }
+                        app.options.padding = cast(ssize) number;
+                    case "width", "height";
+                        if number < 1 || number > 500 {
+                            print("rne: dimensions must be 1..500\n");
+                            return 2;
+                        }
+                        if flag.long == "width" width = cast(ssize) number;
+                        else height = cast(ssize) number;
+                    else;
+                }
+            else;
         }
+    }
+    if !app.options.files && !app.options.folders {
+        print("rne: --files-only cannot be combined with --dirs-only\n");
+        return 2;
     }
     if apply && (preview || snapshot) {
         print("rne: --apply cannot be combined with a preview mode\n");
