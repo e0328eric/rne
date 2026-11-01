@@ -6,34 +6,61 @@
 #import "Strings/Utf8";
 #import "Format";
 
-Rne_Rect :: struct { x: ssize; y: ssize; width: ssize; height: ssize; }
-Rne_Layout :: struct { search: Rne_Rect; replacement: Rne_Rect; list: Rne_Rect; side: Rne_Rect; }
-Rne_Palette :: struct { base: Terminal_Style; muted: Terminal_Style; accent: Terminal_Style; panel: Terminal_Style; selected: Terminal_Style; good: Terminal_Style; warning: Terminal_Style; }
+Rne_Rect :: struct {
+    x: ssize;
+    y: ssize;
+    width: ssize;
+    height: ssize;
+}
+Rne_Layout :: struct {
+    search: Rne_Rect;
+    replacement: Rne_Rect;
+    list: Rne_Rect;
+    side: Rne_Rect;
+}
+Rne_Palette :: struct {
+    base: Terminal_Style;
+    muted: Terminal_Style;
+    accent: Terminal_Style;
+    panel: Terminal_Style;
+    selected: Terminal_Style;
+    good: Terminal_Style;
+    warning: Terminal_Style;
+}
 rne_style :: (r: u8, g: u8, b: u8, background: u8 = 0, bold: bool = false) -> Terminal_Style {
     bg := Terminal_Color.terminal_color_rgb(16, 22, 30);
     if background == 1 bg = Terminal_Color.terminal_color_rgb(24, 33, 44);
     if background == 2 bg = Terminal_Color.terminal_color_rgb(27, 53, 59);
-    flags: Terminal_Style_Flags = .None; if bold flags = .Bold;
+    flags: Terminal_Style_Flags = .None;
+    if bold flags = .Bold;
     return Terminal_Style.terminal_style(Terminal_Color.terminal_color_rgb(r, g, b), bg, flags);
 }
 rne_palette :: () -> Rne_Palette {
-    return .{.base = rne_style(216, 225, 235), .muted = rne_style(127, 147, 164),
-             .accent = rne_style(99, 218, 202, 0, true), .panel = rne_style(216, 225, 235, 1),
-             .selected = rne_style(228, 246, 241, 2), .good = rne_style(129, 212, 171),
-             .warning = rne_style(243, 181, 111)};
+    return .{
+        .base = rne_style(216, 225, 235),
+        .muted = rne_style(127, 147, 164),
+        .accent = rne_style(99, 218, 202, 0, true),
+        .panel = rne_style(216, 225, 235, 1),
+        .selected = rne_style(228, 246, 241, 2),
+        .good = rne_style(129, 212, 171),
+        .warning = rne_style(243, 181, 111)
+    };
 }
 rne_layout :: (width: ssize, height: ssize) -> Rne_Layout {
     out: Rne_Layout;
     if width >= 84 {
         half := (width - 5) / 2;
-        out.search = .{2, 4, half, 4}; out.replacement = .{half + 3, 4, width - half - 5, 4};
-        out.list = .{2, 12, width - 4, (height - 18).max(1)};
+        out.search = .{ 2, 4, half, 4 };
+        out.replacement = .{ half + 3, 4, width - half - 5, 4 };
+        out.list = .{ 2, 12, width - 4, (height - 18).max(1) };
     } else {
-        out.search = .{2, 3, width - 4, 3}; out.replacement = .{2, 7, width - 4, 3};
-        out.list = .{2, 14, width - 4, (height - 20).max(1)};
+        out.search = .{ 2, 3, width - 4, 3 };
+        out.replacement = .{ 2, 7, width - 4, 3 };
+        out.list = .{ 2, 14, width - 4, (height - 20).max(1) };
     }
     if width >= 120 {
-        out.side = .{width - 29, out.list.y - 1, 27, out.list.height + 1}; out.list.width -= 30;
+        out.side = .{ width - 29, out.list.y - 1, 27, out.list.height + 1 };
+        out.list.width -= 30;
     }
     return out;
 }
@@ -41,229 +68,429 @@ rne_layout :: (width: ssize, height: ssize) -> Rne_Layout {
 #public rne_visible :: (text: str) -> str {
     out: String_Builder;
     for character: text {
-        value := cast(u32)character;
+        value := cast(u32) character;
         if value == 10 out.write_string("\\n");
         else if value == 13 out.write_string("\\r");
         else if value == 9 out.write_string("\\t");
         else if value < 32 || value == 127 out.write_string("?");
-        else out.write_rune(cast(rune)value);
+        else out.write_rune(cast(rune) value);
     }
     return out.into_string();
 }
-rne_text :: (canvas: *Terminal_Canvas, x: ssize, y: ssize, width: ssize, text: str, style: Terminal_Style) {
+rne_text :: (
+    canvas: *Terminal_Canvas,
+    x: ssize,
+    y: ssize,
+    width: ssize,
+    text: str,
+    style: Terminal_Style
+) {
     if width <= 0 return;
-    safe := rne_visible(text); defer safe.free();
-    if terminal_text_width(safe) <= width { canvas.text(x, y, safe, style); return; }
-    out: String_Builder; defer out.free(); used: ssize = 0;
-    for value: safe {
-        cells := terminal_rune_width(cast(u32)value);
-        if used + cells > width - 1 break;
-        out.write_rune(value); used += cells;
+    safe := rne_visible(text);
+    defer safe.free();
+    if terminal_text_width(safe) <= width {
+        canvas.text(x, y, safe, style);
+        return;
     }
-    out.write_string("…"); canvas.text(x, y, out.to_string(), style);
+    out: String_Builder;
+    defer out.free();
+    used: ssize = 0;
+    for value: safe {
+        cells := terminal_rune_width(cast(u32) value);
+        if used + cells > width - 1 break;
+        out.write_rune(value);
+        used += cells;
+    }
+    out.write_string("…");
+    canvas.text(x, y, out.to_string(), style);
 }
-rne_field :: (canvas: *Terminal_Canvas, rect: Rne_Rect, label: str, hint: str,
-              editor: *Terminal_Editor, active: bool, palette: Rne_Palette) -> Terminal_Point {
+rne_field :: (
+    canvas: *Terminal_Canvas,
+    rect: Rne_Rect,
+    label: str,
+    hint: str,
+    editor: *Terminal_Editor,
+    active: bool,
+    palette: Rne_Palette
+) -> Terminal_Point {
     canvas.fill(rect.x, rect.y, rect.width, rect.height, 32, palette.panel);
     label_style := rne_style(127, 147, 164, 1);
     if active label_style = rne_style(99, 218, 202, 1, true);
     canvas.fill(rect.x, rect.y, 1, rect.height, 16#2502, label_style);
     rne_text(canvas, rect.x + 2, rect.y, rect.width - 4, label, label_style);
     caret := editor.draw(canvas, rect.x + 2, rect.y + 1, (rect.width - 5).max(2), 1, palette.panel);
-    if editor.values.count == 0 rne_text(canvas, rect.x + 2, rect.y + 1, rect.width - 4, hint, rne_style(89, 108, 127, 1));
-    if rect.height > 3 rne_text(canvas, rect.x + 2, rect.y + 3, rect.width - 4, "Home / End move · Ctrl+W delete word", rne_style(89, 108, 127, 1));
+    if editor.values.count == 0 rne_text(
+        canvas,
+        rect.x + 2,
+        rect.y + 1,
+        rect.width - 4,
+        hint,
+        rne_style(89, 108, 127, 1)
+    );
+    if rect.height > 3 rne_text(
+        canvas,
+        rect.x + 2,
+        rect.y + 3,
+        rect.width - 4,
+        "Home / End move · Ctrl+W delete word",
+        rne_style(89, 108, 127, 1)
+    );
     return caret;
 }
 
 #public {
-rne_render :: (app: *Rne_App, canvas: *Terminal_Canvas) -> Terminal_Point {
-    p := rne_palette(); canvas.clear(p.base);
-    width := canvas.width; height := canvas.height; caret: Terminal_Point = .{-1, -1};
-    if width < 52 || height < 20 {
-        canvas.text(2, 1, "rne / RENAMING STUDIO", p.accent);
-        rne_text(canvas, 2, 3, width - 4, "Resize to at least 52 columns × 20 rows.", p.base);
-        rne_text(canvas, 2, 5, width - 4, "Esc closes overlays; Ctrl+Q exits.", p.muted);
+    rne_render :: (app: *Rne_App, canvas: *Terminal_Canvas) -> Terminal_Point {
+        p := rne_palette();
+        canvas.clear(p.base);
+        width := canvas.width;
+        height := canvas.height;
+        caret: Terminal_Point = .{ -1, -1 };
+        if width < 52 || height < 20 {
+            canvas.text(2, 1, "rne / RENAMING STUDIO", p.accent);
+            rne_text(canvas, 2, 3, width - 4, "Resize to at least 52 columns × 20 rows.", p.base);
+            rne_text(canvas, 2, 5, width - 4, "Esc closes overlays; Ctrl+Q exits.", p.muted);
+            return caret;
+        }
+        layout := rne_layout(width, height);
+        canvas.text(2, 1, "◇  rne", p.accent);
+        canvas.text(11, 1, "RENAMING STUDIO", p.muted);
+        if width >= 84 canvas.text(width - 20, 1, "LOCAL  /  PREVIEW", p.accent);
+        rne_text(canvas, 2, 2, width - 4, app.root, p.muted);
+        search_caret := rne_field(
+            canvas,
+            layout.search,
+            "01  FIND",
+            "Text or regular expression…",
+            &app.search,
+            app.focus == .Search,
+            p
+        );
+        replace_caret := rne_field(
+            canvas,
+            layout.replacement,
+            "02  REPLACE WITH",
+            "Replacement · $1 · $## · $YYYY",
+            &app.replacement,
+            app.focus == .Replace,
+            p
+        );
+        if app.focus == .Search caret = search_caret;
+        if app.focus == .Replace caret = replace_caret;
+        mode: str = "LITERAL";
+        if app.options.regex mode = "REGEX";
+        sensitivity: str = "ignore case";
+        if app.options.sensitive sensitivity = "case sensitive";
+        matches: str = "all matches";
+        if !app.options.all matches = "first match";
+        option_y := layout.list.y - 3;
+        rne_text(
+            canvas,
+            2,
+            option_y,
+            width - 4,
+            tprint(
+                "{}   ·   {}   ·   {}   ·   {}",
+                mode,
+                sensitivity,
+                matches,
+                rne_case_label(app.options.casing)
+            ),
+            p.accent
+        );
+        rne_text(
+            canvas,
+            2,
+            layout.list.y - 1,
+            layout.list.width,
+            tprint(
+                "03  CHANGESET     {} selected   /   {} ready   /   {} blocked",
+                app.selected,
+                app.pending,
+                app.blocked
+            ),
+            p.muted
+        );
+        visible := layout.list.height;
+        if app.cursor < app.scroll app.scroll = app.cursor;
+        if app.cursor >= app.scroll + visible app.scroll = app.cursor - visible + 1;
+        app.scroll = app.scroll.max(0).min((app.files.count - visible).max(0));
+        half := (layout.list.width - 8) / 2;
+        for row: 0..visible {
+            index := app.scroll + row;
+            if index >= app.files.count break;
+            file := &app.files[index];
+            y := layout.list.y + row;
+            style := p.base;
+            if index == app.cursor && app.focus == .Files {
+                style = p.selected;
+                canvas.fill(layout.list.x, y, layout.list.width, 1, 32, style);
+            }
+            mark: str = "○";
+            if file.selected mark = "●";
+            canvas.text(2, y, mark, style);
+            directory: str = "";
+            if file.directory directory = "/";
+            rne_text(canvas, 5, y, half, tprint("{}{}", file.relative, directory), style);
+            arrow_style := p.muted;
+            target_style := p.good;
+            if index == app.cursor && app.focus == .Files {
+                arrow_style.background = style.background;
+                target_style.background = style.background;
+            }
+            canvas.text(half + 6, y, "→", arrow_style);
+            target := file.new_name;
+            if !file.selected {
+                target = "excluded";
+                target_style = arrow_style;
+            } else if file.problem != .None {
+                target = rne_problem(file.problem);
+                target_style = p.warning;
+                target_style.background = style.background;
+            } else if target.count == 0 {
+                target = "unchanged";
+                target_style = arrow_style;
+            }
+            rne_text(canvas, half + 9, y, layout.list.width - half - 7, target, target_style);
+        }
+        if app.files.count == 0 rne_text(
+            canvas,
+            4,
+            layout.list.y + 1,
+            layout.list.width - 4,
+            "No entries in this view. Ctrl+F / Ctrl+D change the filters.",
+            p.muted
+        );
+        if layout.side.width > 0 {
+            x := layout.side.x;
+            canvas.fill(x - 2, layout.side.y, 1, layout.side.height, 16#2502, p.muted);
+            canvas.text(x, layout.side.y, "RECIPE", p.accent);
+            rne_text(canvas, x, layout.side.y + 2, 27, rne_scope(app.options.scope), p.base);
+            rne_text(canvas, x, layout.side.y + 3, 27, rne_case_label(app.options.casing), p.base);
+            enumeration: str = "Counter off";
+            if app.options.enumerate enumeration = tprint(
+                "Counter {} / step {}",
+                app.options.start,
+                app.options.increment
+            );
+            rne_text(canvas, x, layout.side.y + 5, 27, enumeration, p.base);
+            recursion: str = "This directory";
+            if app.options.recursive recursion = "Include subdirectories";
+            rne_text(canvas, x, layout.side.y + 6, 27, recursion, p.muted);
+            include: str = "Files + folders";
+            if !app.options.folders include = "Files only";
+            if !app.options.files include = "Folders only";
+            rne_text(canvas, x, layout.side.y + 7, 27, include, p.muted);
+            dates: str = "Dates: UTC";
+            if app.local_time dates = "Dates: local time";
+            if layout.side.height > 8 rne_text(canvas, x, layout.side.y + 8, 27, dates, p.muted);
+            if layout.side.height >= 12 {
+                canvas.text(x, layout.side.y + 10, "Ctrl+P  Edit recipe", p.accent);
+                canvas.text(x, layout.side.y + 11, "F1      Keys & variables", p.muted);
+            }
+        }
+        canvas.fill(2, height - 5, width - 4, 1, 16#2500, p.muted);
+        status := app.status;
+        status_style := p.muted;
+        if app.regex_error.count > 0 {
+            status = app.regex_error;
+            status_style = p.warning;
+        } else if app.blocked > 0 {
+            status = "Resolve blocked rows or exclude them before applying.";
+            status_style = p.warning;
+        }
+        rne_text(canvas, 2, height - 4, width - 4, status, status_style);
+        if width >= 84 rne_text(
+            canvas,
+            2,
+            height - 2,
+            width - 23,
+            "Tab focus   Space select   Ctrl+P commands   F1 help   Esc exit",
+            p.base
+        );
+        else rne_text(canvas, 2, height - 2, width - 21, "Tab focus · ^P menu · F1 help", p.base);
+        canvas.text(width - 19, height - 2, "F9  Review & apply", p.accent);
+        if app.modal != .None {
+            rne_overlay(app, canvas, p);
+            return .{ -1, -1 };
+        }
         return caret;
     }
-    layout := rne_layout(width, height);
-    canvas.text(2, 1, "◇  rne", p.accent);
-    canvas.text(11, 1, "RENAMING STUDIO", p.muted);
-    if width >= 84 canvas.text(width - 20, 1, "LOCAL  /  PREVIEW", p.accent);
-    rne_text(canvas, 2, 2, width - 4, app.root, p.muted);
-    search_caret := rne_field(canvas, layout.search, "01  FIND", "Text or regular expression…", &app.search, app.focus == .Search, p);
-    replace_caret := rne_field(canvas, layout.replacement, "02  REPLACE WITH", "Replacement · $1 · $## · $YYYY", &app.replacement, app.focus == .Replace, p);
-    if app.focus == .Search caret = search_caret;
-    if app.focus == .Replace caret = replace_caret;
-    mode: str = "LITERAL"; if app.options.regex mode = "REGEX";
-    sensitivity: str = "ignore case"; if app.options.sensitive sensitivity = "case sensitive";
-    matches: str = "all matches"; if !app.options.all matches = "first match";
-    option_y := layout.list.y - 3;
-    rne_text(canvas, 2, option_y, width - 4, tprint("{}   ·   {}   ·   {}   ·   {}", mode, sensitivity, matches, rne_case_label(app.options.casing)), p.accent);
-    rne_text(canvas, 2, layout.list.y - 1, layout.list.width, tprint("03  CHANGESET     {} selected   /   {} ready   /   {} blocked", app.selected, app.pending, app.blocked), p.muted);
-    visible := layout.list.height;
-    if app.cursor < app.scroll app.scroll = app.cursor;
-    if app.cursor >= app.scroll + visible app.scroll = app.cursor - visible + 1;
-    app.scroll = app.scroll.max(0).min((app.files.count - visible).max(0));
-    half := (layout.list.width - 8) / 2;
-    for row: 0..visible {
-        index := app.scroll + row; if index >= app.files.count break;
-        file := &app.files[index]; y := layout.list.y + row;
-        style := p.base;
-        if index == app.cursor && app.focus == .Files {
-            style = p.selected; canvas.fill(layout.list.x, y, layout.list.width, 1, 32, style);
-        }
-        mark: str = "○"; if file.selected mark = "●";
-        canvas.text(2, y, mark, style);
-        directory: str = ""; if file.directory directory = "/";
-        rne_text(canvas, 5, y, half, tprint("{}{}", file.relative, directory), style);
-        arrow_style := p.muted; target_style := p.good;
-        if index == app.cursor && app.focus == .Files { arrow_style.background = style.background; target_style.background = style.background; }
-        canvas.text(half + 6, y, "→", arrow_style);
-        target := file.new_name;
-        if !file.selected { target = "excluded"; target_style = arrow_style; }
-        else if file.problem != .None { target = rne_problem(file.problem); target_style = p.warning; target_style.background = style.background; }
-        else if target.count == 0 { target = "unchanged"; target_style = arrow_style; }
-        rne_text(canvas, half + 9, y, layout.list.width - half - 7, target, target_style);
-    }
-    if app.files.count == 0 rne_text(canvas, 4, layout.list.y + 1, layout.list.width - 4, "No entries in this view. Ctrl+F / Ctrl+D change the filters.", p.muted);
-    if layout.side.width > 0 {
-        x := layout.side.x;
-        canvas.fill(x - 2, layout.side.y, 1, layout.side.height, 16#2502, p.muted);
-        canvas.text(x, layout.side.y, "RECIPE", p.accent);
-        rne_text(canvas, x, layout.side.y + 2, 27, rne_scope(app.options.scope), p.base);
-        rne_text(canvas, x, layout.side.y + 3, 27, rne_case_label(app.options.casing), p.base);
-        enumeration: str = "Counter off";
-        if app.options.enumerate enumeration = tprint("Counter {} / step {}", app.options.start, app.options.increment);
-        rne_text(canvas, x, layout.side.y + 5, 27, enumeration, p.base);
-        recursion: str = "This directory"; if app.options.recursive recursion = "Include subdirectories";
-        rne_text(canvas, x, layout.side.y + 6, 27, recursion, p.muted);
-        include: str = "Files + folders"; if !app.options.folders include = "Files only"; if !app.options.files include = "Folders only";
-        rne_text(canvas, x, layout.side.y + 7, 27, include, p.muted);
-        dates: str = "Dates: UTC"; if app.local_time dates = "Dates: local time";
-        if layout.side.height > 8 rne_text(canvas, x, layout.side.y + 8, 27, dates, p.muted);
-        if layout.side.height >= 12 {
-            canvas.text(x, layout.side.y + 10, "Ctrl+P  Edit recipe", p.accent);
-            canvas.text(x, layout.side.y + 11, "F1      Keys & variables", p.muted);
-        }
-    }
-    canvas.fill(2, height - 5, width - 4, 1, 16#2500, p.muted);
-    status := app.status; status_style := p.muted;
-    if app.regex_error.count > 0 { status = app.regex_error; status_style = p.warning; }
-    else if app.blocked > 0 { status = "Resolve blocked rows or exclude them before applying."; status_style = p.warning; }
-    rne_text(canvas, 2, height - 4, width - 4, status, status_style);
-    if width >= 84 rne_text(canvas, 2, height - 2, width - 23, "Tab focus   Space select   Ctrl+P commands   F1 help   Esc exit", p.base);
-    else rne_text(canvas, 2, height - 2, width - 21, "Tab focus · ^P menu · F1 help", p.base);
-    canvas.text(width - 19, height - 2, "F9  Review & apply", p.accent);
-    if app.modal != .None { rne_overlay(app, canvas, p); return .{-1, -1}; }
-    return caret;
-}
 
-rne_action :: (app: *Rne_App, action: ssize) {
-    rescan := false;
-    if action == 0 app.options.regex = !app.options.regex;
-    else if action == 1 app.options.sensitive = !app.options.sensitive;
-    else if action == 2 app.options.all = !app.options.all;
-    else if action == 3 app.options.scope = cast(Rne_Scope)((cast(ssize)app.options.scope + 1) % 3);
-    else if action == 4 app.options.casing = cast(Rne_Case)((cast(ssize)app.options.casing + 1) % 5);
-    else if action == 5 app.options.enumerate = !app.options.enumerate;
-    else if action == 6 { app.options.recursive = !app.options.recursive; rescan = true; }
-    else if action == 7 { app.options.files = !app.options.files; rescan = true; }
-    else if action == 8 { app.options.folders = !app.options.folders; rescan = true; }
-    else if action == 9 { rne_select(app, 1); return; }
-    else if action == 10 { rne_select(app, 0); return; }
-    else if action == 11 { rne_select(app, 2); return; }
-    else if action == 12 rescan = true;
-    if rescan _ = rne_refresh(app); else rne_recompute(app);
-}
-// Returns true only for an explicit quit. Pasted bytes cannot invoke shortcuts
-// or accept a confirmation, including pasted ESC, Enter and Ctrl+C.
-rne_key :: (app: *Rne_App, key: Terminal_Key, page: ssize) -> bool {
-    if key.pasted {
-        if app.modal == .None && app.focus != .Files && key.rune >= 32 && key.rune != 127 {
-            if app.focus == .Search _ = app.search.insert(key.rune); else _ = app.replacement.insert(key.rune);
+    rne_action :: (app: *Rne_App, action: ssize) {
+        rescan := false;
+        if action == 0 app.options.regex = !app.options.regex;
+        else if action == 1 app.options.sensitive = !app.options.sensitive;
+        else if action == 2 app.options.all = !app.options.all;
+        else if action == 3 app.options.scope = cast(Rne_Scope)(
+            (cast(ssize) app.options.scope + 1) % 3
+        );
+        else if action == 4 app.options.casing = cast(Rne_Case)(
+            (cast(ssize) app.options.casing + 1) % 5
+        );
+        else if action == 5 app.options.enumerate = !app.options.enumerate;
+        else if action == 6 {
+            app.options.recursive = !app.options.recursive;
+            rescan = true;
+        } else if action == 7 {
+            app.options.files = !app.options.files;
+            rescan = true;
+        } else if action == 8 {
+            app.options.folders = !app.options.folders;
+            rescan = true;
+        } else if action == 9 {
+            rne_select(app, 1);
+            return;
+        } else if action == 10 {
+            rne_select(app, 0);
+            return;
+        } else if action == 11 {
+            rne_select(app, 2);
+            return;
+        } else if action == 12 rescan = true;
+        if rescan _ = rne_refresh(app);
+        else rne_recompute(app);
+    }
+    // Returns true only for an explicit quit. Pasted bytes cannot invoke shortcuts
+    // or accept a confirmation, including pasted ESC, Enter and Ctrl+C.
+    rne_key :: (app: *Rne_App, key: Terminal_Key, page: ssize) -> bool {
+        if key.pasted {
+            if app.modal == .None && app.focus != .Files && key.rune >= 32 && key.rune != 127 {
+                if app.focus == .Search _ = app.search.insert(key.rune);
+                else _ = app.replacement.insert(key.rune);
+            }
+            return false;
         }
+        if app.modal != .None {
+            if key.code == .Escape || (key.ctrl && (key.rune == 99 || key.rune == 113)) {
+                app.modal = .None;
+                rne_status(app, "Cancelled. Preview is unchanged.");
+                return false;
+            }
+            if app.modal == .Confirm {
+                if key.code == .Left || key.code == .Right || key.code == .Tab app.command = 1 - app.command;
+                if key.code == .Character && key.rune == 110 app.modal = .None;
+                if (key.code == .Character && key.rune == 121) || (
+                    key.code == .Enter && app.command == 1
+                ) _ = rne_apply(app);
+                else if key.code == .Enter app.modal = .None;
+            } else if app.modal == .Commands {
+                if key.code == .Up app.command = (app.command + 12) % 13;
+                if key.code == .Down app.command = (app.command + 1) % 13;
+                if key.code == .Enter {
+                    action := app.command;
+                    app.modal = .None;
+                    rne_action(app, action);
+                }
+            } else if key.code == .F1 || key.code == .Enter app.modal = .None;
+            return false;
+        }
+        if key.code == .Escape || (key.ctrl && (key.rune == 99 || key.rune == 113)) return true;
+        if key.code == .F1 {
+            app.modal = .Help;
+            return false;
+        }
+        if key.code == .F5 {
+            _ = rne_refresh(app);
+            return false;
+        }
+        if key.code == .F9 {
+            app.command = 0;
+            rne_request_apply(app);
+            return false;
+        }
+        if key.code == .Tab {
+            delta: ssize = 1;
+            if key.shift delta = 2;
+            app.focus = cast(Rne_Focus)((cast(ssize) app.focus + delta) % 3);
+            return false;
+        }
+        if key.ctrl {
+            action: ssize = -1;
+            if key.rune == 112 {
+                app.modal = .Commands;
+                app.command = 0;
+                return false;
+            }
+            if key.rune == 114 action = 0;
+            if key.rune == 115 action = 1;
+            if key.rune == 103 action = 2;
+            if key.rune == 97 action = 3;
+            if key.rune == 116 action = 4;
+            if key.rune == 101 action = 5;
+            if key.rune == 117 action = 6;
+            if key.rune == 102 action = 7;
+            if key.rune == 100 action = 8;
+            if action >= 0 {
+                rne_action(app, action);
+                return false;
+            }
+        }
+        if app.focus == .Files {
+            if key.code == .Up || (key.code == .Character && key.rune == 107) app.cursor -= 1;
+            if key.code == .Down || (key.code == .Character && key.rune == 106) app.cursor += 1;
+            if key.code == .Page_Up app.cursor -= page;
+            if key.code == .Page_Down app.cursor += page;
+            if key.code == .Home app.cursor = 0;
+            if key.code == .End app.cursor = app.files.count - 1;
+            app.cursor = app.cursor.max(0).min((app.files.count - 1).max(0));
+            if (key.code == .Character && key.rune == 32) || key.code == .Enter {
+                if app.files.count > 0 {
+                    app.files[app.cursor].selected = !app.files[app.cursor].selected;
+                    rne_recompute(app);
+                }
+            }
+            if key.code == .Character && !key.ctrl {
+                if key.rune == 97 rne_select(app, 1);
+                if key.rune == 110 rne_select(app, 0);
+                if key.rune == 105 rne_select(app, 2);
+            }
+            return false;
+        }
+        if key.code == .Enter {
+            app.focus = cast(Rne_Focus)(cast(ssize) app.focus + 1);
+            return false;
+        }
+        if key.ctrl && key.rune == 106 return false;
+        editor := &app.search;
+        if app.focus == .Replace editor = &app.replacement;
+        if editor.handle_key(key) rne_recompute(app);
         return false;
     }
-    if app.modal != .None {
-        if key.code == .Escape || (key.ctrl && (key.rune == 99 || key.rune == 113)) {
-            app.modal = .None; rne_status(app, "Cancelled. Preview is unchanged."); return false;
-        }
-        if app.modal == .Confirm {
-            if key.code == .Left || key.code == .Right || key.code == .Tab app.command = 1 - app.command;
-            if key.code == .Character && key.rune == 110 app.modal = .None;
-            if (key.code == .Character && key.rune == 121) || (key.code == .Enter && app.command == 1) _ = rne_apply(app);
-            else if key.code == .Enter app.modal = .None;
-        } else if app.modal == .Commands {
-            if key.code == .Up app.command = (app.command + 12) % 13;
-            if key.code == .Down app.command = (app.command + 1) % 13;
-            if key.code == .Enter { action := app.command; app.modal = .None; rne_action(app, action); }
-        } else if key.code == .F1 || key.code == .Enter app.modal = .None;
-        return false;
-    }
-    if key.code == .Escape || (key.ctrl && (key.rune == 99 || key.rune == 113)) return true;
-    if key.code == .F1 { app.modal = .Help; return false; }
-    if key.code == .F5 { _ = rne_refresh(app); return false; }
-    if key.code == .F9 { app.command = 0; rne_request_apply(app); return false; }
-    if key.code == .Tab {
-        delta: ssize = 1; if key.shift delta = 2;
-        app.focus = cast(Rne_Focus)((cast(ssize)app.focus + delta) % 3); return false;
-    }
-    if key.ctrl {
-        action: ssize = -1;
-        if key.rune == 112 { app.modal = .Commands; app.command = 0; return false; }
-        if key.rune == 114 action = 0; if key.rune == 115 action = 1; if key.rune == 103 action = 2;
-        if key.rune == 97 action = 3; if key.rune == 116 action = 4; if key.rune == 101 action = 5;
-        if key.rune == 117 action = 6; if key.rune == 102 action = 7; if key.rune == 100 action = 8;
-        if action >= 0 { rne_action(app, action); return false; }
-    }
-    if app.focus == .Files {
-        if key.code == .Up || (key.code == .Character && key.rune == 107) app.cursor -= 1;
-        if key.code == .Down || (key.code == .Character && key.rune == 106) app.cursor += 1;
-        if key.code == .Page_Up app.cursor -= page;
-        if key.code == .Page_Down app.cursor += page;
-        if key.code == .Home app.cursor = 0;
-        if key.code == .End app.cursor = app.files.count - 1;
-        app.cursor = app.cursor.max(0).min((app.files.count - 1).max(0));
-        if (key.code == .Character && key.rune == 32) || key.code == .Enter {
-            if app.files.count > 0 { app.files[app.cursor].selected = !app.files[app.cursor].selected; rne_recompute(app); }
-        }
-        if key.code == .Character && !key.ctrl {
-            if key.rune == 97 rne_select(app, 1);
-            if key.rune == 110 rne_select(app, 0);
-            if key.rune == 105 rne_select(app, 2);
-        }
-        return false;
-    }
-    if key.code == .Enter { app.focus = cast(Rne_Focus)(cast(ssize)app.focus + 1); return false; }
-    if key.ctrl && key.rune == 106 return false;
-    editor := &app.search; if app.focus == .Replace editor = &app.replacement;
-    if editor.handle_key(key) rne_recompute(app);
-    return false;
-}
-rne_mouse :: (app: *Rne_App, mouse: Terminal_Mouse_Event, width: ssize, height: ssize) {
-    if app.modal != .None || !mouse.pressed return;
-    layout := rne_layout(width, height);
-    x := cast(ssize)mouse.x; y := cast(ssize)mouse.y;
-    if mouse.button == .Wheel_Up app.cursor = (app.cursor - 3).max(0);
-    if mouse.button == .Wheel_Down app.cursor = (app.cursor + 3).min((app.files.count - 1).max(0));
-    if mouse.button != .Left || mouse.moved return;
-    if rne_inside(layout.search, x, y) app.focus = .Search;
-    else if rne_inside(layout.replacement, x, y) app.focus = .Replace;
-    else if rne_inside(layout.list, x, y) {
-        index := app.scroll + y - layout.list.y;
-        if index < app.files.count {
-            app.focus = .Files; app.cursor = index;
-            if x < 5 { app.files[index].selected = !app.files[index].selected; rne_recompute(app); }
+    rne_mouse :: (app: *Rne_App, mouse: Terminal_Mouse_Event, width: ssize, height: ssize) {
+        if app.modal != .None || !mouse.pressed return;
+        layout := rne_layout(width, height);
+        x := cast(ssize) mouse.x;
+        y := cast(ssize) mouse.y;
+        if mouse.button == .Wheel_Up app.cursor = (app.cursor - 3).max(0);
+        if mouse.button == .Wheel_Down app.cursor = (app.cursor + 3).min(
+            (app.files.count - 1).max(0)
+        );
+        if mouse.button != .Left || mouse.moved return;
+        if rne_inside(layout.search, x, y) app.focus = .Search;
+        else if rne_inside(layout.replacement, x, y) app.focus = .Replace;
+        else if rne_inside(layout.list, x, y) {
+            index := app.scroll + y - layout.list.y;
+            if index < app.files.count {
+                app.focus = .Files;
+                app.cursor = index;
+                if x < 5 {
+                    app.files[index].selected = !app.files[index].selected;
+                    rne_recompute(app);
+                }
+            }
         }
     }
 }
+rne_inside :: (rect: Rne_Rect, x: ssize, y: ssize) -> bool {
+    return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
-rne_inside :: (rect: Rne_Rect, x: ssize, y: ssize) -> bool { return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height; }
 rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
-    width := (canvas.width - 8).min(78); height: ssize = 20;
+    width := (canvas.width - 8).min(78);
+    height: ssize = 20;
     if app.modal == .Confirm height = 10;
     height = height.min(canvas.height - 4);
-    x := (canvas.width - width) / 2; y := (canvas.height - height) / 2;
+    x := (canvas.width - width) / 2;
+    y := (canvas.height - height) / 2;
     canvas.fill(x, y, width, height, 32, p.panel);
     canvas.box(x, y, width, height, rne_style(99, 218, 202, 1));
     title: str = "KEYS & VARIABLES";
@@ -271,30 +498,111 @@ rne_overlay :: (app: *Rne_App, canvas: *Terminal_Canvas, p: Rne_Palette) {
     if app.modal == .Confirm title = "REVIEW YOUR CHANGESET";
     canvas.text(x + 3, y + 1, title, rne_style(99, 218, 202, 1, true));
     if app.modal == .Confirm {
-        rne_text(canvas, x + 3, y + 3, width - 6, tprint("Rename {} selected items in this directory?", app.pending), p.panel);
-        rne_text(canvas, x + 3, y + 4, width - 6, "Existing destinations will never be overwritten.", rne_style(127, 147, 164, 1));
-        cancel := p.panel; apply := p.panel; if app.command == 0 cancel = p.selected; else apply = p.selected;
-        canvas.text(x + 3, y + 6, "  Cancel  ", cancel); canvas.text(x + 17, y + 6, "  Apply changes  ", apply);
-        rne_text(canvas, x + 3, y + 8, width - 6, "← → choose   Enter confirm   Y apply   Esc cancel", rne_style(127, 147, 164, 1));
+        rne_text(
+            canvas,
+            x + 3,
+            y + 3,
+            width - 6,
+            tprint("Rename {} selected items in this directory?", app.pending),
+            p.panel
+        );
+        rne_text(
+            canvas,
+            x + 3,
+            y + 4,
+            width - 6,
+            "Existing destinations will never be overwritten.",
+            rne_style(127, 147, 164, 1)
+        );
+        cancel := p.panel;
+        apply := p.panel;
+        if app.command == 0 cancel = p.selected;
+        else apply = p.selected;
+        canvas.text(x + 3, y + 6, "  Cancel  ", cancel);
+        canvas.text(x + 17, y + 6, "  Apply changes  ", apply);
+        rne_text(
+            canvas,
+            x + 3,
+            y + 8,
+            width - 6,
+            "← → choose   Enter confirm   Y apply   Esc cancel",
+            rne_style(127, 147, 164, 1)
+        );
     } else if app.modal == .Commands {
-        labels := .["Regex mode", "Case sensitivity", "All / first match", "Apply to", "Case transform", "Automatic counter", "Subdirectories", "Include files", "Include folders", "Select all", "Select none", "Invert selection", "Refresh directory"];
-        shortcuts := .["Ctrl+R", "Ctrl+S", "Ctrl+G", "Ctrl+A", "Ctrl+T", "Ctrl+E", "Ctrl+U", "Ctrl+F", "Ctrl+D", "A in list", "N in list", "I in list", "F5"];
-        visible := (height - 5).max(1); first := (app.command - visible + 1).max(0);
+        labels := .[
+            "Regex mode",
+            "Case sensitivity",
+            "All / first match",
+            "Apply to",
+            "Case transform",
+            "Automatic counter",
+            "Subdirectories",
+            "Include files",
+            "Include folders",
+            "Select all",
+            "Select none",
+            "Invert selection",
+            "Refresh directory"
+        ];
+        shortcuts := .[
+            "Ctrl+R",
+            "Ctrl+S",
+            "Ctrl+G",
+            "Ctrl+A",
+            "Ctrl+T",
+            "Ctrl+E",
+            "Ctrl+U",
+            "Ctrl+F",
+            "Ctrl+D",
+            "A in list",
+            "N in list",
+            "I in list",
+            "F5"
+        ];
+        visible := (height - 5).max(1);
+        first := (app.command - visible + 1).max(0);
         for row: 0..visible {
-            index := first + row; if index >= labels.count break;
-            style := p.panel; if index == app.command { style = p.selected; canvas.fill(x + 2, y + 3 + row, width - 4, 1, 32, style); }
+            index := first + row;
+            if index >= labels.count break;
+            style := p.panel;
+            if index == app.command {
+                style = p.selected;
+                canvas.fill(x + 2, y + 3 + row, width - 4, 1, 32, style);
+            }
             rne_text(canvas, x + 4, y + 3 + row, width - 20, labels[index], style);
             rne_text(canvas, x + width - 15, y + 3 + row, 12, shortcuts[index], style);
         }
-        canvas.text(x + 3, y + height - 2, "↑ ↓ choose   Enter change   Esc cancel", rne_style(127, 147, 164, 1));
+        canvas.text(
+            x + 3,
+            y + height - 2,
+            "↑ ↓ choose   Enter change   Esc cancel",
+            rne_style(127, 147, 164, 1)
+        );
     } else {
-        lines := .["Tab / Shift+Tab   Search → Replace → Files", "Arrows / PgUp / PgDn / Home / End   Navigate",
-                   "Space / Enter     Toggle selected file", "A / N / I         Select all / none / invert",
-                   "Ctrl+P            All recipe options", "F5                Refresh directory", "F9                Review before applying",
-                   "Esc               Close overlay; otherwise exit", "", "$1  ${name}       Regex capture groups · $$ literal $",
-                   "$#  $##  $###     Padded counters", "${start=245,padding=4,increment=1}",
-                   "$YYYY-$MM-$DD     Current local date", "$m.YYYY  $c.YYYY  Modified / created year",
-                   "$parent           Parent directory name"];
-        for i: 0..lines.count if i < height - 4 rne_text(canvas, x + 3, y + 3 + i, width - 6, lines[i], p.panel);
+        lines := .[
+            "Tab / Shift+Tab   Search → Replace → Files",
+            "Arrows / PgUp / PgDn / Home / End   Navigate",
+            "Space / Enter     Toggle selected file",
+            "A / N / I         Select all / none / invert",
+            "Ctrl+P            All recipe options",
+            "F5                Refresh directory",
+            "F9                Review before applying",
+            "Esc               Close overlay; otherwise exit",
+            "",
+            "$1  ${name}       Regex capture groups · $$ literal $",
+            "$#  $##  $###     Padded counters",
+            "${start=245,padding=4,increment=1}",
+            "$YYYY-$MM-$DD     Current local date",
+            "$m.YYYY  $c.YYYY  Modified / created year",
+            "$parent           Parent directory name"
+        ];
+        for i: 0..lines.count if i < height - 4 rne_text(
+            canvas,
+            x + 3,
+            y + 3 + i,
+            width - 6,
+            lines[i],
+            p.panel
+        );
     }
 }

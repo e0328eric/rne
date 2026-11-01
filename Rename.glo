@@ -9,233 +9,389 @@
 #import "Format";
 
 #public {
-Rne_Scope :: enum { Whole; Name; Extension; }
-Rne_Case :: enum { Keep; Lower; Upper; Title; Sentence; }
-Rne_Options :: struct {
-    regex: bool;
-    sensitive: bool;
-    all: bool = true;
-    files: bool = true;
-    folders: bool = true;
-    recursive: bool;
-    scope: Rne_Scope;
-    casing: Rne_Case;
-    enumerate: bool;
-    start: s64 = 1;
-    increment: s64 = 1;
-    padding: ssize = 2;
-}
-Rne_Problem :: enum { None; Empty; Invalid; Duplicate; Occupied; Metadata; }
-Rne_Entry :: struct {
-    path: str;
-    relative: str;
-    name: str;
-    directory: bool;
-    depth: ssize;
-    selected: bool = true;
-    metadata: Metadata;
-    new_name: str;
-    target: str;
-    problem: Rne_Problem;
-}
-Rne_Dates :: struct { now: Date_Time; modified: Date_Time; created: Date_Time; has_modified: bool; has_created: bool; }
+    Rne_Scope :: enum {
+        Whole;
+        Name;
+        Extension;
+    }
+    Rne_Case :: enum {
+        Keep;
+        Lower;
+        Upper;
+        Title;
+        Sentence;
+    }
+    Rne_Options :: struct {
+        regex: bool;
+        sensitive: bool;
+        all: bool = true;
+        files: bool = true;
+        folders: bool = true;
+        recursive: bool;
+        scope: Rne_Scope;
+        casing: Rne_Case;
+        enumerate: bool;
+        start: s64 = 1;
+        increment: s64 = 1;
+        padding: ssize = 2;
+    }
+    Rne_Problem :: enum {
+        None;
+        Empty;
+        Invalid;
+        Duplicate;
+        Occupied;
+        Metadata;
+    }
+    Rne_Entry :: struct {
+        path: str;
+        relative: str;
+        name: str;
+        directory: bool;
+        depth: ssize;
+        selected: bool = true;
+        metadata: Metadata;
+        new_name: str;
+        target: str;
+        problem: Rne_Problem;
+    }
+    Rne_Dates :: struct {
+        now: Date_Time;
+        modified: Date_Time;
+        created: Date_Time;
+        has_modified: bool;
+        has_created: bool;
+    }
 }
 Rne_Entry ::: instance Freeable {
     free :: (entry: *Rne_Entry) {
-        entry.path.free(); entry.relative.free(); entry.name.free(); entry.new_name.free(); entry.target.free();
+        entry.path.free();
+        entry.relative.free();
+        entry.name.free();
+        entry.new_name.free();
+        entry.target.free();
     }
 }
 
 #public {
-rne_problem :: (problem: Rne_Problem) -> str {
-    if problem == .Empty return "empty name";
-    if problem == .Invalid return "invalid file name";
-    if problem == .Duplicate return "duplicate destination";
-    if problem == .Occupied return "destination already exists";
-    if problem == .Metadata return "cannot inspect entry";
-    return "";
-}
-rne_scope :: (scope: Rne_Scope) -> str {
-    if scope == .Name return "Name"; if scope == .Extension return "Extension"; return "Name + extension";
-}
-rne_case_label :: (mode: Rne_Case) -> str {
-    if mode == .Lower return "lower"; if mode == .Upper return "UPPER";
-    if mode == .Title return "Title"; if mode == .Sentence return "Sentence"; return "Keep case";
-}
-// Byte offset of the extension separator, or name.count. Leading dots belong
-// to the stem. Directories always keep their entire name as the stem.
-rne_extension :: (name: str, directory: bool) -> ssize {
-    if directory return name.count;
-    leading: ssize = 0; while leading < name.count && name[leading] == 46 leading += 1;
-    at := name.count;
-    while at > leading { at -= 1; if name[at] == 46 return at; }
-    return name.count;
-}
-rne_counter :: (start: s64, increment: s64, index: ssize) -> s64 {
-    value := cast(s128)start + cast(s128)increment * cast(s128)index;
-    if value > 9223372036854775807 return 9223372036854775807;
-    if value < -9223372036854775807 - 1 return -9223372036854775807 - 1;
-    return cast(s64)value;
-}
-rne_number :: (out: *String_Builder, value: s64, width: ssize) {
-    digits := tprint("{}", value); negative := value < 0;
-    if negative out.write_byte(45);
-    for i: digits.count..width.min(64) out.write_byte(48);
-    if negative out.write_string(digits[1..]); else out.write_string(digits);
-}
-rne_date_token :: (out: *String_Builder, token: str, date: Date_Time) {
-    months := .["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    days := .["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    if token == {
-        case "YYYY"; rne_number(out, date.date.year, 4);
-        case "YY"; rne_number(out, (date.date.year % 100 + 100) % 100, 2);
-        case "MMMM"; out.write_string(months[date.date.month - 1]);
-        case "MMM"; out.write_string(months[date.date.month - 1][0..3]);
-        case "MM"; rne_number(out, cast(s64)date.date.month, 2);
-        case "DDDD"; out.write_string(days[cast(ssize)date.date.weekday()]);
-        case "DDD"; out.write_string(days[cast(ssize)date.date.weekday()][0..3]);
-        case "DD"; rne_number(out, cast(s64)date.date.day, 2);
-        case "hh"; rne_number(out, cast(s64)date.time.hour, 2);
-        case "mm"; rne_number(out, cast(s64)date.time.minute, 2);
-        case "ss"; rne_number(out, cast(s64)(date.time.second), 2);
-        case "fff"; rne_number(out, cast(s64)(date.time.nanosecond / 1_000_000), 3);
-        case "AMPM"; if date.time.hour < 12 out.write_string("AM"); else out.write_string("PM");
-        else;
+    rne_problem :: (problem: Rne_Problem) -> str {
+        if problem == .Empty return "empty name";
+        if problem == .Invalid return "invalid file name";
+        if problem == .Duplicate return "duplicate destination";
+        if problem == .Occupied return "destination already exists";
+        if problem == .Metadata return "cannot inspect entry";
+        return "";
     }
-}
-// Variables are expanded once; $ signs in expanded parent/date values are
-// escaped for the subsequent regex substitution instead of becoming captures.
-rne_variables :: (input: str, file: *const Rne_Entry, options: Rne_Options, index: ssize,
-                  dates: Rne_Dates, has_counter: *bool) -> str {
-    out: String_Builder; i: ssize = 0;
-    while i < input.count {
-        if input[i] != 36 { out.write_byte(input[i]); i += 1; continue; }
-        if i + 1 < input.count && input[i + 1] == 36 {
-            out.write_string("$$"); i += 2; continue;
+    rne_scope :: (scope: Rne_Scope) -> str {
+        if scope == .Name return "Name";
+        if scope == .Extension return "Extension";
+        return "Name + extension";
+    }
+    rne_case_label :: (mode: Rne_Case) -> str {
+        if mode == .Lower return "lower";
+        if mode == .Upper return "UPPER";
+        if mode == .Title return "Title";
+        if mode == .Sentence return "Sentence";
+        return "Keep case";
+    }
+    // Byte offset of the extension separator, or name.count. Leading dots belong
+    // to the stem. Directories always keep their entire name as the stem.
+    rne_extension :: (name: str, directory: bool) -> ssize {
+        if directory return name.count;
+        leading: ssize = 0;
+        while leading < name.count && name[leading] == 46 leading += 1;
+        at := name.count;
+        while at > leading {
+            at -= 1;
+            if name[at] == 46 return at;
         }
-        begin := i; i += 1;
-        value: String_Builder; defer value.free(); expanded := false;
-        if i < input.count && input[i] == 35 {
-            first := i; while i < input.count && input[i] == 35 i += 1;
-            rne_number(&value, rne_counter(options.start, options.increment, index), i - first);
-            expanded = true; has_counter.* = true;
-        } else if i < input.count && input[i] == 123 {
-            end := input.find("}", i).unwrap_or(-1);
-            if end >= 0 {
-                start := options.start; increment := options.increment; padding := options.padding; found := false;
-                for field: input[i + 1..end].split(",") {
-                    equals := field.find("=").unwrap_or(-1); if equals < 0 continue;
-                    key := field[..equals].trim(); text := field[equals + 1..].trim();
-                    if from_string(s64, text) == {
-                        case .Some(n);
-                            if key == {
-                                case "start"; start = n; found = true;
-                                case "increment"; increment = n; found = true;
-                                case "padding"; if n >= 0 && n <= 64 { padding = cast(ssize)n; found = true; }
-                                else;
-                            }
-                        else;
+        return name.count;
+    }
+    rne_counter :: (start: s64, increment: s64, index: ssize) -> s64 {
+        value := cast(s128) start + cast(s128) increment * cast(s128) index;
+        if value > 9223372036854775807 return 9223372036854775807;
+        if value < -9223372036854775807 - 1 return -9223372036854775807 - 1;
+        return cast(s64) value;
+    }
+    rne_number :: (out: *String_Builder, value: s64, width: ssize) {
+        digits := tprint("{}", value);
+        negative := value < 0;
+        if negative out.write_byte(45);
+        for i: digits.count..width.min(64) out.write_byte(48);
+        if negative out.write_string(digits[1..]);
+        else out.write_string(digits);
+    }
+    rne_date_token :: (out: *String_Builder, token: str, date: Date_Time) {
+        months := .[
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December"
+        ];
+        days := .["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+        if token == {
+            case "YYYY";
+                rne_number(out, date.date.year, 4);
+            case "YY";
+                rne_number(out, (date.date.year % 100 + 100) % 100, 2);
+            case "MMMM";
+                out.write_string(months[date.date.month - 1]);
+            case "MMM";
+                out.write_string(months[date.date.month - 1][0..3]);
+            case "MM";
+                rne_number(out, cast(s64) date.date.month, 2);
+            case "DDDD";
+                out.write_string(days[cast(ssize) date.date.weekday()]);
+            case "DDD";
+                out.write_string(days[cast(ssize) date.date.weekday()][0..3]);
+            case "DD";
+                rne_number(out, cast(s64) date.date.day, 2);
+            case "hh";
+                rne_number(out, cast(s64) date.time.hour, 2);
+            case "mm";
+                rne_number(out, cast(s64) date.time.minute, 2);
+            case "ss";
+                rne_number(out, cast(s64)(date.time.second), 2);
+            case "fff";
+                rne_number(out, cast(s64)(date.time.nanosecond / 1_000_000), 3);
+            case "AMPM";
+                if date.time.hour < 12 out.write_string("AM");
+                else out.write_string("PM");
+            else;
+        }
+    }
+    // Variables are expanded once; $ signs in expanded parent/date values are
+    // escaped for the subsequent regex substitution instead of becoming captures.
+    rne_variables :: (
+        input: str,
+        file: *const Rne_Entry,
+        options: Rne_Options,
+        index: ssize,
+        dates: Rne_Dates,
+        has_counter: *bool
+    ) -> str {
+        out: String_Builder;
+        i: ssize = 0;
+        while i < input.count {
+            if input[i] != 36 {
+                out.write_byte(input[i]);
+                i += 1;
+                continue;
+            }
+            if i + 1 < input.count && input[i + 1] == 36 {
+                out.write_string("$$");
+                i += 2;
+                continue;
+            }
+            begin := i;
+            i += 1;
+            value: String_Builder;
+            defer value.free();
+            expanded := false;
+            if i < input.count && input[i] == 35 {
+                first := i;
+                while i < input.count && input[i] == 35 i += 1;
+                rne_number(&value, rne_counter(options.start, options.increment, index), i - first);
+                expanded = true;
+                has_counter.* = true;
+            } else if i < input.count && input[i] == 123 {
+                end := input.find("}", i).unwrap_or(-1);
+                if end >= 0 {
+                    start := options.start;
+                    increment := options.increment;
+                    padding := options.padding;
+                    found := false;
+                    for field: input[i + 1..end].split(",") {
+                        equals := field.find("=").unwrap_or(-1);
+                        if equals < 0 continue;
+                        key := field[..equals].trim();
+                        text := field[equals + 1..].trim();
+                        if from_string(s64, text) == {
+                            case .Some(n);
+                                if key == {
+                                    case "start";
+                                        start = n;
+                                        found = true;
+                                    case "increment";
+                                        increment = n;
+                                        found = true;
+                                    case "padding";
+                                        if n >= 0 && n <= 64 {
+                                            padding = cast(ssize) n;
+                                            found = true;
+                                        }
+                                    else;
+                                }
+                            else;
+                        }
+                    }
+                    if found {
+                        rne_number(&value, rne_counter(start, increment, index), padding);
+                        i = end + 1;
+                        expanded = true;
+                        has_counter.* = true;
                     }
                 }
-                if found {
-                    rne_number(&value, rne_counter(start, increment, index), padding);
-                    i = end + 1; expanded = true; has_counter.* = true;
+            } else if input[i..].starts_with("parent") {
+                value.write_string(path_basename(path_dirname(file.path)));
+                i += 6;
+                expanded = true;
+            } else {
+                date := dates.now;
+                available := true;
+                prefix: ssize = 0;
+                if input[i..].starts_with("m.") {
+                    date = dates.modified;
+                    available = dates.has_modified;
+                    prefix = 2;
+                }
+                if input[i..].starts_with("c.") {
+                    date = dates.created;
+                    available = dates.has_created;
+                    prefix = 2;
+                }
+                for token: .[
+                    "YYYY",
+                    "MMMM",
+                    "DDDD",
+                    "AMPM",
+                    "MMM",
+                    "DDD",
+                    "fff",
+                    "YY",
+                    "MM",
+                    "DD",
+                    "hh",
+                    "mm",
+                    "ss"
+                ] {
+                    if input[i + prefix..].starts_with(token) {
+                        i += prefix + token.count;
+                        if available rne_date_token(&value, token, date);
+                        else value.write_string(input[begin..i]);
+                        expanded = true;
+                        break;
+                    }
                 }
             }
-        } else if input[i..].starts_with("parent") {
-            value.write_string(path_basename(path_dirname(file.path))); i += 6; expanded = true;
-        } else {
-            date := dates.now; available := true; prefix: ssize = 0;
-            if input[i..].starts_with("m.") { date = dates.modified; available = dates.has_modified; prefix = 2; }
-            if input[i..].starts_with("c.") { date = dates.created; available = dates.has_created; prefix = 2; }
-            for token: .["YYYY", "MMMM", "DDDD", "AMPM", "MMM", "DDD", "fff", "YY", "MM", "DD", "hh", "mm", "ss"] {
-                if input[i + prefix..].starts_with(token) {
-                    i += prefix + token.count;
-                    if available rne_date_token(&value, token, date);
-                    else value.write_string(input[begin..i]);
-                    expanded = true; break;
+            if expanded {
+                for b: value.to_string().bytes() {
+                    if options.regex && b == 36 out.write_byte(36);
+                    out.write_byte(b);
                 }
+            } else {
+                out.write_byte(36);
+                i = begin + 1;
             }
         }
-        if expanded {
-            for b: value.to_string().bytes() {
-                if options.regex && b == 36 out.write_byte(36);
-                out.write_byte(b);
+        return out.into_string();
+    }
+    rne_case :: (input: str, mode: Rne_Case) -> str {
+        if mode == .Keep return input.clone();
+        out: String_Builder;
+        first := true;
+        for rune_value: input {
+            value := cast(u32) rune_value;
+            upper := mode == .Upper;
+            if mode == .Title upper = first && value.is_unicode_alphanumeric();
+            if mode == .Sentence upper = first && value.is_unicode_alpha();
+            if upper {
+                // Full expansions needed for common Unicode filenames.
+                if value == 16#df out.write_string("SS");
+                else out.write_rune(cast(rune) value.to_unicode_upper_rune());
+            } else if value == 16#130 out.write_string("i\u{0307}");
+            else out.write_rune(cast(rune) value.to_unicode_lower_rune());
+            if mode == .Title first = !value.is_unicode_alphanumeric();
+            if mode == .Sentence {
+                if value.is_unicode_alpha() first = false;
+                if value == 46 || value == 33 || value == 63 first = true;
             }
-        } else { out.write_byte(36); i = begin + 1; }
-    }
-    return out.into_string();
-}
-rne_case :: (input: str, mode: Rne_Case) -> str {
-    if mode == .Keep return input.clone();
-    out: String_Builder; first := true;
-    for rune_value: input {
-        value := cast(u32)rune_value; upper := mode == .Upper;
-        if mode == .Title upper = first && value.is_unicode_alphanumeric();
-        if mode == .Sentence upper = first && value.is_unicode_alpha();
-        if upper {
-            // Full expansions needed for common Unicode filenames.
-            if value == 16#df out.write_string("SS");
-            else out.write_rune(cast(rune)value.to_unicode_upper_rune());
-        } else if value == 16#130 out.write_string("i\u{0307}");
-        else out.write_rune(cast(rune)value.to_unicode_lower_rune());
-        if mode == .Title first = !value.is_unicode_alphanumeric();
-        if mode == .Sentence {
-            if value.is_unicode_alpha() first = false;
-            if value == 46 || value == 33 || value == 63 first = true;
         }
+        return out.into_string();
     }
-    return out.into_string();
-}
-rne_new_name :: (file: *const Rne_Entry, search: str, replacement: str, options: Rne_Options,
-                 index: ssize, regex: *Regex, dates: Rne_Dates) -> str {
-    if search.count == 0 && !options.enumerate && options.casing == .Keep return file.name.clone();
-    split := rne_extension(file.name, file.directory);
-    stem := file.name[..split]; extension: str = "";
-    if split < file.name.count extension = file.name[split + 1..];
-    target := file.name;
-    if options.scope == .Name target = stem;
-    if options.scope == .Extension target = extension;
-    has_counter := false;
-    variables := rne_variables(replacement, file, options, index, dates, &has_counter); defer variables.free();
-    replaced: str;
-    if search.count > 0 {
-        limit: ssize = 0; if !options.all limit = 1;
-        replaced = regex.replace(target, variables, limit, !options.regex);
-    } else replaced = target.clone();
-    defer replaced.free();
-    cased := rne_case(replaced, options.casing); defer cased.free();
-    if options.scope == .Whole {
-        cut := rne_extension(cased, file.directory); stem = cased[..cut]; extension = "";
-        if cut < cased.count extension = cased[cut + 1..];
-    } else if options.scope == .Name stem = cased;
-    else extension = cased;
-    out: String_Builder; out.write_string(stem);
-    if options.enumerate && !has_counter rne_number(&out, rne_counter(options.start, options.increment, index), options.padding);
-    if extension.count > 0 && !file.directory { out.write_byte(46); out.write_string(extension); }
-    return out.into_string();
-}
-rne_natural :: (left: str, right: str) -> Ordering {
-    a: ssize = 0; b: ssize = 0;
-    while a < left.count && b < right.count {
-        x := left[a]; y := right[b];
-        if x >= 48 && x <= 57 && y >= 48 && y <= 57 {
-            while a < left.count && left[a] == 48 a += 1;
-            while b < right.count && right[b] == 48 b += 1;
-            aa := a; bb := b;
-            while a < left.count && left[a] >= 48 && left[a] <= 57 a += 1;
-            while b < right.count && right[b] >= 48 && right[b] <= 57 b += 1;
-            if a - aa != b - bb return (a - aa) <=> (b - bb);
-            for i: 0..a-aa if left[aa + i] != right[bb + i] return left[aa + i] <=> right[bb + i];
-            continue;
+    rne_new_name :: (
+        file: *const Rne_Entry,
+        search: str,
+        replacement: str,
+        options: Rne_Options,
+        index: ssize,
+        regex: *Regex,
+        dates: Rne_Dates
+    ) -> str {
+        if search.count == 0 && !options.enumerate && options.casing == .Keep return file.name.clone();
+        split := rne_extension(file.name, file.directory);
+        stem := file.name[..split];
+        extension: str = "";
+        if split < file.name.count extension = file.name[split + 1..];
+        target := file.name;
+        if options.scope == .Name target = stem;
+        if options.scope == .Extension target = extension;
+        has_counter := false;
+        variables := rne_variables(replacement, file, options, index, dates, &has_counter);
+        defer variables.free();
+        replaced: str;
+        if search.count > 0 {
+            limit: ssize = 0;
+            if !options.all limit = 1;
+            replaced = regex.replace(target, variables, limit, !options.regex);
+        } else replaced = target.clone();
+        defer replaced.free();
+        cased := rne_case(replaced, options.casing);
+        defer cased.free();
+        if options.scope == .Whole {
+            cut := rne_extension(cased, file.directory);
+            stem = cased[..cut];
+            extension = "";
+            if cut < cased.count extension = cased[cut + 1..];
+        } else if options.scope == .Name stem = cased;
+        else extension = cased;
+        out: String_Builder;
+        out.write_string(stem);
+        if options.enumerate && !has_counter rne_number(
+            &out,
+            rne_counter(options.start, options.increment, index),
+            options.padding
+        );
+        if extension.count > 0 && !file.directory {
+            out.write_byte(46);
+            out.write_string(extension);
         }
-        if x >= 65 && x <= 90 x += 32; if y >= 65 && y <= 90 y += 32;
-        if x != y return x <=> y;
-        a += 1; b += 1;
+        return out.into_string();
     }
-    order := (left.count - a) <=> (right.count - b);
-    if order != .Equal return order;
-    // A deterministic tie-break keeps zero-padded counters reproducible.
-    return left <=> right;
-}
+    rne_natural :: (left: str, right: str) -> Ordering {
+        a: ssize = 0;
+        b: ssize = 0;
+        while a < left.count && b < right.count {
+            x := left[a];
+            y := right[b];
+            if x >= 48 && x <= 57 && y >= 48 && y <= 57 {
+                while a < left.count && left[a] == 48 a += 1;
+                while b < right.count && right[b] == 48 b += 1;
+                aa := a;
+                bb := b;
+                while a < left.count && left[a] >= 48 && left[a] <= 57 a += 1;
+                while b < right.count && right[b] >= 48 && right[b] <= 57 b += 1;
+                if a - aa != b - bb return (a - aa) <=> (b - bb);
+                for i: 0..a - aa if left[aa + i] != right[bb + i] return left[aa + i] <=> right[bb + i];
+                continue;
+            }
+            if x >= 65 && x <= 90 x += 32;
+            if y >= 65 && y <= 90 y += 32;
+            if x != y return x <=> y;
+            a += 1;
+            b += 1;
+        }
+        order := (left.count - a) <=> (right.count - b);
+        if order != .Equal return order;
+        // A deterministic tie-break keeps zero-padded counters reproducible.
+        return left <=> right;
+    }
 }
