@@ -1,0 +1,310 @@
+#import "Rename.glo";
+#import "Regex";
+#import "Terminal/Editor";
+#import "File_System/Directory";
+#import "File_System/Metadata";
+#import "File_System/Types";
+#import "File_System/Path";
+#import "Container/HashMap";
+#import "Sort";
+#import "Strings/Utf8";
+#import "String_Builder";
+#import "Time";
+#import "Format";
+
+#public {
+Rne_Focus :: enum { Search; Replace; Files; }
+Rne_Modal :: enum { None; Help; Confirm; Commands; }
+Rne_App :: struct {
+    root: str;
+    files: [..]Rne_Entry;
+    options: Rne_Options;
+    search: Terminal_Editor;
+    replacement: Terminal_Editor;
+    regex: Regex;
+    regex_pattern: str;
+    regex_sensitive: bool;
+    regex_mode: bool;
+    regex_valid: bool;
+    regex_error: str;
+    status: str;
+    scan_error: bool;
+    focus: Rne_Focus;
+    modal: Rne_Modal;
+    cursor: ssize;
+    scroll: ssize;
+    command: ssize;
+    pending: ssize;
+    blocked: ssize;
+    selected: ssize;
+    now: Unix_Timestamp;
+    timezone: Timezone;
+    local_time: bool;
+    last_applied: ssize;
+}
+}
+Rne_Walk_Item :: struct { path: str; relative: str; depth: ssize; }
+Rne_Move :: struct { current: str; destination: str; depth: ssize; }
+Rne_Journal_Entry :: struct { source: str; target: str; }
+Rne_App ::: instance Freeable {
+    free :: (app: *Rne_App) {
+        defer free_fields(app);
+        app.root.free(); app.regex_pattern.free(); app.regex_error.free(); app.status.free();
+    }
+}
+Rne_Walk_Item ::: instance Freeable { free :: (item: *Rne_Walk_Item) { item.path.free(); item.relative.free(); } }
+Rne_Move ::: instance Freeable { free :: (item: *Rne_Move) { item.current.free(); item.destination.free(); } }
+Rne_Journal_Entry ::: instance Freeable { free :: (item: *Rne_Journal_Entry) { item.source.free(); item.target.free(); } }
+
+#public {
+rne_status :: (app: *Rne_App, text: str) { app.status.free(); app.status = text.clone(); }
+rne_initialize :: (app: *Rne_App, root: str) -> bool {
+    // Preserve native path traversal semantics, including symlink/.. prefixes.
+    app.root = root.clone(); app.now = unix_now().unwrap_or(.{});
+    if timezone_load_local() == { case .Ok(zone); app.timezone = zone; app.local_time = true; else; }
+    app.search.limit = 4096; app.replacement.limit = 4096;
+    return rne_refresh(app);
+}
+rne_join :: (parent: str, name: str) -> str { return tprint("{}/{}", parent, name).clone(); }
+rne_sort_entries :: (a: Rne_Entry, b: Rne_Entry) -> Ordering {
+    if a.directory != b.directory { if a.directory return .Less; return .Greater; }
+    return rne_natural(a.relative, b.relative);
+}
+rne_refresh :: (app: *Rne_App) -> bool {
+    app.files.clear(); app.scan_error = false;
+    app.now = unix_now().unwrap_or(app.now);
+    pending: [..]Rne_Walk_Item; defer pending.free();
+    if !is_directory(app.root).unwrap_or(false) {
+        app.scan_error = true; rne_status(app, tprint("Cannot open directory: {}", app.root)); return false;
+    }
+    pending.push(.{app.root.clone(), "".clone(), 0});
+    while pending.count > 0 {
+        item := pending.pop(); defer item.free();
+        if read_directory(item.path) == {
+            case .Err(error);
+                app.scan_error = true; rne_status(app, tprint("Cannot read {} ({})", item.path, error.kind));
+            case .Ok(list);
+                defer list.free();
+                for entry: list.entries {
+                    path := rne_join(item.path, entry.name);
+                    relative := entry.name.clone();
+                    if item.relative.count > 0 { relative.free(); relative = rne_join(item.relative, entry.name); }
+                    meta: Metadata; valid := true;
+                    if metadata(path) == { case .Ok(value); meta = value; case .Err; valid = false; }
+                    directory := valid && meta.kind == .Directory;
+                    if directory && app.options.recursive {
+                        if item.depth >= 256 {
+                            app.scan_error = true; rne_status(app, "Directory depth exceeds 256; apply disabled");
+                        } else pending.push(.{path.clone(), relative.clone(), item.depth + 1});
+                    }
+                    if (directory && !app.options.folders) || (!directory && !app.options.files) { path.free(); relative.free(); continue; }
+                    problem: Rne_Problem = .None; if !valid problem = .Metadata;
+                    app.files.push(.{.path = path, .relative = relative, .name = entry.name.clone(),
+                                     .directory = directory, .depth = item.depth, .metadata = meta, .problem = problem});
+                }
+        }
+    }
+    _ = app.files.sort_by(rne_sort_entries);
+    app.cursor = app.cursor.min((app.files.count - 1).max(0)); app.scroll = 0;
+    rne_recompute(app);
+    if !app.scan_error rne_status(app, tprint("{} items loaded. Changes stay in preview until you apply.", app.files.count));
+    return !app.scan_error;
+}
+rne_local_date :: (app: *const Rne_App, timestamp: Unix_Timestamp) -> Date_Time {
+    if app.local_time {
+        if app.timezone.to_local(timestamp) == { case .Ok(value); return value.value; else; }
+    }
+    return timestamp.to_date_time().unwrap_or(.{});
+}
+rne_dates :: (app: *const Rne_App, file: *const Rne_Entry) -> Rne_Dates {
+    out: Rne_Dates = .{.now = rne_local_date(app, app.now), .has_modified = file.metadata.modified.valid, .has_created = file.metadata.created.valid};
+    if out.has_modified out.modified = rne_local_date(app, .{file.metadata.modified.seconds, file.metadata.modified.nanoseconds});
+    if out.has_created out.created = rne_local_date(app, .{file.metadata.created.seconds, file.metadata.created.nanoseconds});
+    return out;
+}
+rne_recompute :: (app: *Rne_App) {
+    search := app.search.text(); replacement := app.replacement.text();
+    if !app.regex_valid || search != app.regex_pattern || app.options.sensitive != app.regex_sensitive || app.options.regex != app.regex_mode {
+        app.regex.free(); app.regex = .{};
+        app.regex_pattern.free(); app.regex_pattern = search.clone();
+        app.regex_sensitive = app.options.sensitive; app.regex_mode = app.options.regex;
+        app.regex_error.free(); app.regex_error = "".clone();
+        pattern := search.clone(); if !app.options.regex { pattern.free(); pattern = Regex.escape(search); }
+        defer pattern.free();
+        if Regex.compile(pattern, .{.case_insensitive = !app.options.sensitive}) == {
+            case .Ok(value); app.regex = value; app.regex_valid = true;
+            case .Err(error); app.regex_valid = false; app.regex_error = tprint("Pattern at byte {}: {}", error.offset, error.message).clone();
+        }
+    }
+    index: ssize = 0;
+    for *file: app.files {
+        file.new_name.free(); file.new_name = "".clone(); file.target.free(); file.target = "".clone();
+        if file.problem != .Metadata file.problem = .None;
+        if !file.selected || file.problem == .Metadata continue;
+        if app.regex_valid {
+            name := rne_new_name(file, search, replacement, app.options, index, &app.regex, rne_dates(app, file));
+            if name == file.name name.free();
+            else {
+                file.new_name = name;
+                if name.count == 0 file.problem = .Empty;
+                else if !rne_valid_name(name) file.problem = .Invalid;
+                else file.target = rne_join(path_dirname(file.path), name);
+            }
+        }
+        index += 1;
+    }
+    rne_validate(app);
+}
+rne_valid_name :: (name: str) -> bool {
+    if name == { case "", ".", ".."; return false; else; }
+    for b: name.bytes() if b == 47 || b == 0 || b < 32 || b == 127 return false;
+    #if OUT.os == Target_OS.Windows {
+        for b: name.bytes() if b == 92 || b == 58 || b == 42 || b == 63 || b == 34 || b == 60 || b == 62 || b == 124 return false;
+        if name[name.count - 1] == 46 || name[name.count - 1] == 32 return false;
+        // Device names remain reserved with any extension, including multiple
+        // dots. Windows also recognizes the superscript 1, 2 and 3 suffixes.
+        stem_end := name.find(".").unwrap_or(name.count);
+        while stem_end > 0 && name[stem_end - 1] == 32 stem_end -= 1;
+        stem := name[..stem_end];
+        upper := rne_case(stem, .Upper); defer upper.free();
+        if upper == {
+            case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                 "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                 "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+                 "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"; return false;
+            else;
+        }
+    }
+    return true;
+}
+rne_path_key :: (path: str) -> str {
+    #if OUT.os == Target_OS.Windows { return rne_case(path, .Lower); }
+    return path.clone();
+}
+rne_validate :: (app: *Rne_App) {
+    destinations: HashMap(str, ssize); defer destinations.reset_with(rne_free_key);
+    sources: HashMap(str, ssize); defer sources.reset_with(rne_free_key);
+    for i: 0..app.files.count {
+        file := &app.files[i];
+        if file.target.count == 0 || file.problem != .None continue;
+        key := rne_path_key(file.target);
+        if destinations.get(key) == {
+            case .Some(other); file.problem = .Duplicate; app.files[other.*].problem = .Duplicate; key.free();
+            case null; _ = destinations.insert(key, i);
+        }
+        source_key := rne_path_key(file.path);
+        if sources.get(source_key) == {
+            case .Some(existing); existing.* = i; source_key.free();
+            case null; _ = sources.insert(source_key, i);
+        }
+    }
+    // Propagate collisions through dependency chains. An invalid rename never
+    // counts as vacating its source for another row.
+    changed := true;
+    while changed {
+        changed = false;
+        for *file: app.files {
+            if file.target.count == 0 || file.problem != .None continue;
+            key := rne_path_key(file.target); defer key.free();
+            vacating := false;
+            if sources.get(key) == { case .Some(index); vacating = app.files[index.*].problem == .None; else; }
+            occupied := true;
+            if exists(file.target) == { case .Ok(value); occupied = value; else; }
+            if occupied && !vacating { file.problem = .Occupied; changed = true; }
+        }
+    }
+    app.pending = 0; app.blocked = 0; app.selected = 0;
+    for file: app.files {
+        if file.selected app.selected += 1;
+        if file.selected && file.problem != .None app.blocked += 1;
+        else if file.target.count > 0 app.pending += 1;
+    }
+}
+rne_select :: (app: *Rne_App, mode: ssize) {
+    for *file: app.files {
+        if mode == 0 file.selected = false; else if mode == 1 file.selected = true; else file.selected = !file.selected;
+    }
+    rne_recompute(app);
+}
+rne_request_apply :: (app: *Rne_App) {
+    if app.scan_error || !app.regex_valid || app.blocked > 0 { rne_status(app, "Resolve the errors before applying this plan."); return; }
+    if app.pending == 0 { rne_status(app, "No changes to apply."); return; }
+    app.modal = .Confirm;
+}
+rne_apply :: (app: *Rne_App) -> bool {
+    app.modal = .None; app.last_applied = 0;
+    rne_validate(app);
+    if app.scan_error || !app.regex_valid || app.blocked > 0 || app.pending == 0 {
+        rne_status(app, "Apply cancelled: the plan is empty or contains conflicts."); return false;
+    }
+    moves: [..]Rne_Move; defer moves.free();
+    journal: [..]Rne_Journal_Entry; defer journal.free();
+    for file: app.files if file.target.count > 0 {
+        valid := false;
+        if metadata(file.path) == {
+            case .Ok(current);
+                valid = current.kind == file.metadata.kind &&
+                    (!file.metadata.file_id.valid || (current.file_id.valid && current.file_id.high == file.metadata.file_id.high && current.file_id.low == file.metadata.file_id.low));
+            else;
+        }
+        if !valid { rne_status(app, tprint("Entry changed since preview: {}. Refresh first.", file.relative)); return false; }
+        moves.push(.{file.path.clone(), file.target.clone(), file.depth});
+    }
+    _ = moves.sort_by(rne_move_order);
+    success := true; stamp := unix_now().unwrap_or(.{});
+    // Deepest entries are staged first. Every directory move rebases both the
+    // staged paths and destinations of its children. Reverse order commits
+    // parents first, which also handles simultaneous parent/child renames.
+    for i: 0..moves.count {
+        staged := rne_join(path_dirname(moves[i].current), tprint(".rne-tmp-{}-{}-{}", stamp.seconds, stamp.nanosecond, i));
+        defer staged.free();
+        if !rne_move(app, &moves, i, staged, &journal) { success = false; break; }
+    }
+    if success {
+        i := moves.count;
+        while i > 0 {
+            i -= 1; destination := moves[i].destination.clone(); defer destination.free();
+            if !rne_move(app, &moves, i, destination, &journal) { success = false; break; }
+        }
+    }
+    if !success {
+        detail := app.status.clone(); defer detail.free();
+        failures: ssize = 0; recovery: String_Builder; defer recovery.free();
+        i := journal.count;
+        while i > 0 {
+            i -= 1; entry := journal[i];
+            if rename(entry.target, entry.source, false) == {
+                case .Err; failures += 1; recovery.writef(" {} -> {};", entry.target, entry.source);
+                else;
+            }
+        }
+        if failures == 0 rne_status(app, tprint("{}; all completed moves rolled back.", detail));
+        else rne_status(app, tprint("{}; {} rollback failures. Recover manually:{}", detail, failures, recovery.to_string()));
+        return false;
+    }
+    count := moves.count;
+    _ = rne_refresh(app); app.last_applied = count;
+    rne_status(app, tprint("Renamed {} items. Preview refreshed.", count)); return true;
+}
+}
+
+rne_move_order :: (a: Rne_Move, b: Rne_Move) -> Ordering { return b.depth <=> a.depth; }
+rne_free_key :: (key: *str, value: *ssize) { key.free(); }
+rne_rebase :: (path: *str, before: str, after: str) {
+    if path.*.count <= before.count || !path.*.starts_with(before) || path.*[before.count] != 47 return;
+    updated := tprint("{}{}", after, path.*[before.count..]).clone(); path.free(); path.* = updated;
+}
+rne_move :: (app: *Rne_App, moves: *[..]Rne_Move, index: ssize, destination: str, journal: *[..]Rne_Journal_Entry) -> bool {
+    source := moves.*[index].current.clone(); defer source.free();
+    if rename(source, destination, false) == {
+        case .Err(error); rne_status(app, tprint("Rename failed: {} -> {} ({})", source, destination, error.kind)); return false;
+        else;
+    }
+    journal.push(.{source.clone(), destination.clone()});
+    moves.*[index].current.free(); moves.*[index].current = destination.clone();
+    for *move: moves.* {
+        rne_rebase(&move.current, source, destination);
+        rne_rebase(&move.destination, source, destination);
+    }
+    return true;
+}

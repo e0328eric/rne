@@ -1,0 +1,180 @@
+#import "App.glo";
+#import "Rename.glo";
+#import "Ui.glo";
+#import "Terminal";
+#import "Terminal/Editor";
+#import "Command_Line";
+#import "Context";
+#import "Io";
+#import "String_Builder";
+#import "Strings/Utf8";
+#import "Serialization/Json";
+
+rne_help :: () {
+    print("{}", "rne [OPTIONS] [DIRECTORY]\n\nInteractive bulk renaming with live preview. F9 reviews a plan before applying.\n\n  -r, --recursive           Include subdirectories (never follow symlinks)\n  -E, --regex               Use regular expressions\n  -s, --search TEXT         Initial search\n  -w, --replace TEXT        Initial replacement\n      --case-sensitive      Match case (default: ignore case)\n      --first               Replace only the first match\n      --scope whole|name|ext Select the part to transform\n      --case keep|lower|upper|title|sentence\n      --enumerate           Append an automatic counter\n      --start N --increment N --padding N\n      --files-only          Exclude directories\n      --dirs-only           Exclude files\n      --preview             Print the plan without changing files\n      --json                Print the plan as JSON (implies --preview)\n      --apply --yes         Apply a validated plan without the TUI\n      --snapshot            Print a plain-text UI preview\n      --snapshot-ansi       Print a styled UI preview\n      --width N --height N  Snapshot dimensions (default: 120 × 32)\n  -h, --help                Show this help\n\nReplacement: $1, ${name}, $YYYY, $m.YYYY, $c.YYYY, $parent, $##,\n             ${start=245,padding=4,increment=1}\n");
+}
+rne_json_string :: (out: *String_Builder, text: str) {
+    value := json_serialize(text).unwrap_or("null".clone()); defer value.free(); out.write_string(value);
+}
+rne_print_plan :: (app: *Rne_App, json: bool) {
+    if !json {
+        for file: app.files {
+            before := rne_visible(file.relative); defer before.free();
+            after := rne_visible(file.new_name); defer after.free();
+            if file.problem != .None print("! {}  [{}]\n", before, rne_problem(file.problem));
+            else if file.target.count > 0 print("  {}  ->  {}\n", before, after);
+        }
+        print("{} ready, {} blocked, {} selected\n", app.pending, app.blocked, app.selected);
+        if app.regex_error.count > 0 print("{}\n", app.regex_error);
+        if app.scan_error print("{}\n", app.status);
+        return;
+    }
+    out: String_Builder; defer out.free();
+    out.write_string("{\"root\":"); rne_json_string(&out, app.root);
+    out.writef(",\"ready\":{},\"blocked\":{},\"selected\":{},\"error\":", app.pending, app.blocked, app.selected);
+    error := app.regex_error; if app.scan_error error = app.status;
+    rne_json_string(&out, error); out.write_string(",\"entries\":[");
+    for i: 0..app.files.count {
+        file := &app.files[i]; if i > 0 out.write_byte(44);
+        out.write_string("{\"from\":"); rne_json_string(&out, file.relative);
+        out.write_string(",\"to\":");
+        if file.target.count == 0 out.write_string("null"); else rne_json_string(&out, file.new_name);
+        out.writef(",\"selected\":{},\"directory\":{},\"error\":", file.selected, file.directory);
+        rne_json_string(&out, rne_problem(file.problem)); out.write_byte(125);
+    }
+    out.write_string("]}\n"); print("{}", out.to_string());
+}
+rne_snapshot :: (app: *Rne_App, width: ssize, height: ssize, ansi: bool) {
+    canvas := Terminal_Canvas.terminal_canvas_init(width, height); defer canvas.free();
+    _ = rne_render(app, &canvas);
+    if ansi { print("{}\n", canvas.frame()); return; }
+    out: String_Builder; defer out.free();
+    for y: 0..canvas.height {
+        for x: 0..canvas.width {
+            cell := canvas.cells[y * canvas.width + x];
+            if cell.width == 0 continue;
+            out.write_rune(cast(rune)cell.rune);
+            for mark: cell.marks out.write_rune(cast(rune)mark);
+        }
+        out.write_byte(10);
+    }
+    print("{}", out.to_string());
+}
+rne_run :: (app: *Rne_App) -> s32 {
+    flags := Terminal_Flags.Default | Terminal_Flags.Bracketed_Paste | Terminal_Flags.Mouse;
+    opened := Terminal_Session.terminal_begin(flags, .title = "rne · Renaming studio");
+    if opened == {
+        case .Err; print("rne needs an interactive terminal. Use --preview, --json, or --snapshot.\n"); return 2;
+        case .Ok(session);
+            defer session.free(); defer session.end();
+            canvas := Terminal_Canvas.terminal_canvas_init(80, 24); defer canvas.free();
+            dirty := true; pasted := false; quit := false;
+            while !quit {
+                if session.size() == {
+                    case .Ok(size);
+                        width := cast(ssize)size.columns.max(1); height := cast(ssize)size.rows.max(1);
+                        if width != canvas.width || height != canvas.height { canvas.resize(width, height); dirty = true; }
+                    else;
+                }
+                if dirty && !pasted {
+                    caret := rne_render(app, &canvas);
+                    if canvas.render_at(&session, 0, 0) == { case .Err; return 1; else; }
+                    _ = session.cursor_show(caret.x >= 0);
+                    if caret.x >= 0 _ = session.cursor_to(cast(s64)caret.x, cast(s64)caret.y);
+                    _ = session.flush(); dirty = false; reset_temporary_storage();
+                }
+                event := session.read_event(100);
+                if session.input_closed break;
+                if event.kind == .Paste_Begin { pasted = true; continue; }
+                if event.kind == .Paste_End { pasted = false; rne_recompute(app); dirty = true; continue; }
+                if event.kind == .Key {
+                    page := (canvas.height - 18).max(1);
+                    if canvas.width < 84 page = (canvas.height - 20).max(1);
+                    quit = rne_key(app, event.key, page); dirty = true;
+                }
+                if event.kind == .Mouse { rne_mouse(app, event.mouse, canvas.width, canvas.height); dirty = true; }
+                if event.kind == .Resize dirty = true;
+            }
+    }
+    return 0;
+}
+main :: () -> s32 {
+    args := get_cmdline_args(); app: Rne_App; defer app.free();
+    root: str = "."; have_root := false; preview := false; json := false; apply := false; yes := false;
+    snapshot := false; ansi := false; width: ssize = 120; height: ssize = 32; positional := false;
+    i: ssize = 1;
+    while i < args.count {
+        arg := args[i]; i += 1;
+        if positional || !arg.starts_with("-") {
+            if have_root { print("rne: only one directory can be opened\n"); return 2; }
+            root = arg; have_root = true; continue;
+        }
+        if arg == {
+            case "--"; positional = true; continue;
+            case "-";
+                if have_root { print("rne: only one directory can be opened\n"); return 2; }
+                root = arg; have_root = true; continue;
+            case "--help", "-h"; rne_help(); return 0;
+            case "--recursive", "-r"; app.options.recursive = true; continue;
+            case "--regex", "-E"; app.options.regex = true; continue;
+            case "--case-sensitive"; app.options.sensitive = true; continue;
+            case "--first"; app.options.all = false; continue;
+            case "--enumerate"; app.options.enumerate = true; continue;
+            case "--files-only"; app.options.files = true; app.options.folders = false; continue;
+            case "--dirs-only"; app.options.files = false; app.options.folders = true; continue;
+            case "--preview"; preview = true; continue;
+            case "--json"; json = true; preview = true; continue;
+            case "--apply"; apply = true; continue;
+            case "--yes"; yes = true; continue;
+            case "--snapshot"; snapshot = true; continue;
+            case "--snapshot-ansi"; snapshot = true; ansi = true; continue;
+            case "--search", "-s", "--replace", "-w", "--scope", "--case", "--start", "--increment", "--padding", "--width", "--height";
+            else; print("rne: unknown option {}\n", arg); return 2;
+        }
+        if i == args.count { print("rne: missing value for {}\n", arg); return 2; }
+        value := args[i]; i += 1;
+        if arg == {
+            case "--search", "-s"; app.search.set_text(value);
+            case "--replace", "-w"; app.replacement.set_text(value);
+            case "--scope";
+                if value == {
+                    case "whole"; app.options.scope = .Whole;
+                    case "name"; app.options.scope = .Name;
+                    case "ext"; app.options.scope = .Extension;
+                    else; print("rne: scope must be whole, name or ext\n"); return 2;
+                }
+            case "--case";
+                if value == {
+                    case "keep"; app.options.casing = .Keep;
+                    case "lower"; app.options.casing = .Lower;
+                    case "upper"; app.options.casing = .Upper;
+                    case "title"; app.options.casing = .Title;
+                    case "sentence"; app.options.casing = .Sentence;
+                    else; print("rne: unknown case transform {}\n", value); return 2;
+                }
+            else;
+                if from_string(s64, value) == {
+                    case null; print("rne: invalid integer for {}\n", arg); return 2;
+                    case .Some(number);
+                        if arg == {
+                            case "--start"; app.options.start = number;
+                            case "--increment"; app.options.increment = number;
+                            case "--padding";
+                                if number < 1 || number > 64 { print("rne: padding must be 1..64\n"); return 2; }
+                                app.options.padding = cast(ssize)number;
+                            case "--width", "--height";
+                                if number < 1 || number > 500 { print("rne: dimensions must be 1..500\n"); return 2; }
+                                if arg == { case "--width"; width = cast(ssize)number; else; height = cast(ssize)number; }
+                            else;
+                        }
+                }
+        }
+    }
+    if apply && (preview || snapshot) { print("rne: --apply cannot be combined with a preview mode\n"); return 2; }
+    if apply && !yes { print("rne: --apply requires --yes; use --preview to inspect the plan\n"); return 2; }
+    if !rne_initialize(&app, root) { print("rne: {}\n", app.status); return 1; }
+    if snapshot { rne_snapshot(&app, width, height, ansi); return 0; }
+    if preview { rne_print_plan(&app, json); if app.blocked > 0 || !app.regex_valid return 1; return 0; }
+    if apply { success := rne_apply(&app); print("{}\n", app.status); if !success return 1; return 0; }
+    return rne_run(&app);
+}
