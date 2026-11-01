@@ -10,7 +10,7 @@
 #import "Strings/Utf8";
 #import "Serialization/Json";
 
-rne_command :: #string
+RNE_COMMAND :: #string
     \\#@rne | Interactive bulk renaming with live preview. F9 / Enter reviews a plan before applying. {
     \\    *DIRECTORY: string = . | Directory to open (default: current directory);
     \\    -recursive,r: bool | Include subdirectories (never follow symlinks);
@@ -174,7 +174,7 @@ rne_run :: (app: *Rne_App) -> s32 {
     return 0;
 }
 main :: () -> s32 {
-    parsed := Command_Line.parse(rne_command);
+    parsed := Command_Line.parse(RNE_COMMAND);
     #pattern.Ok(line) := parsed else {
         if #pattern.Err(error) = parsed {
             print("rne: {}", error.message);
@@ -188,7 +188,11 @@ main :: () -> s32 {
         print("{}", line.help_msg);
         print(
             "{}",
-            "\nReplacement: $1, ${name}, $YYYY, $m.YYYY, $c.YYYY, $parent, $##,\n             ${start=245,padding=4,increment=1}\n"
+            #string
+                \\
+                \\Replacement: $1, ${name}, $YYYY, $m.YYYY, $c.YYYY, $parent, $##,
+                \\             ${start=245,padding=4,increment=1}
+                \\
         );
         return 0;
     }

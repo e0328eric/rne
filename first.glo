@@ -1,0 +1,29 @@
+#import "Compiler";
+#import "File_System/Path";
+#import "Format";
+#import "Io";
+
+#comptime {
+    set_build_options_dc(.do_output = false);
+    directory := path_dirname(#source_location.filename);
+
+    workspace := Workspace.create("rne");
+    options := workspace.get_build_options();
+
+    options.output_path = tprint("{}/build", directory);
+    options.output_executable_name = "rne";
+    options.optimization_level = .Very_Optimized;
+
+    options.set_build_options(workspace);
+
+    if add_build_file(tprint("{}/main.glo", directory), workspace) == {
+        case .Ok(log);
+            print("{}", log);
+        case .Err(error);
+            print("{}\n", error.message);
+            exit(error.status);
+    }
+    print("rne: {}/build/rne\n", directory);
+}
+
+main :: () {}
