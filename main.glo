@@ -2,7 +2,7 @@
 #import "Rename.glo";
 #import "Ui.glo";
 #import "Terminal";
-#import "Terminal/Editor";
+#import "Terminal/Text_Input";
 #import "Command_Line";
 #import "Context";
 #import "Io";
@@ -197,7 +197,7 @@ main :: () -> s32 {
         return 0;
     }
     command := line.active_command();
-    #pattern.Some(directory) := command.argument("DIRECTORY") else {
+    #pattern ?directory := command.argument("DIRECTORY") else {
         return 2;
     }
     #pattern.String(root) := directory.value else {

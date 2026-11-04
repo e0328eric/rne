@@ -2,7 +2,7 @@
 #import "Rename.glo";
 #import "Regex";
 #import "Terminal";
-#import "Terminal/Editor";
+#import "Terminal/Text_Input";
 #import "String_Builder";
 #import "Strings/Utf8";
 #import "Format";
@@ -164,7 +164,7 @@ rne_field :: (
     rect: Rne_Rect,
     label: str,
     hint: str,
-    editor: *Terminal_Editor,
+    input: *Terminal_Text_Input,
     active: bool,
     palette: Rne_Palette
 ) -> Terminal_Point {
@@ -173,8 +173,8 @@ rne_field :: (
     if active label_style = rne_style(99, 218, 202, 1, true);
     canvas.fill(rect.x, rect.y, 1, rect.height, 16#2502, label_style);
     rne_text(canvas, rect.x + 2, rect.y, rect.width - 4, label, label_style);
-    caret := editor.draw(canvas, rect.x + 2, rect.y + 1, (rect.width - 5).max(2), 1, palette.panel);
-    if editor.values.count == 0 rne_text(
+    caret := input.draw(canvas, rect.x + 2, rect.y + 1, (rect.width - 5).max(2), 1, palette.panel);
+    if input.values.count == 0 rne_text(
         canvas,
         rect.x + 2,
         rect.y + 1,
@@ -516,9 +516,9 @@ rne_field :: (
             return false;
         }
         if key.ctrl && key.rune == 106 return false;
-        editor := &app.search;
-        if app.focus == .Replace editor = &app.replacement;
-        if editor.handle_key(key) rne_recompute(app);
+        input := &app.search;
+        if app.focus == .Replace input = &app.replacement;
+        if input.handle_key(key) rne_recompute(app);
         return false;
     }
     rne_mouse :: (app: *Rne_App, mouse: Terminal_Mouse_Event, width: ssize, height: ssize) {

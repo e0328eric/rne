@@ -1,6 +1,6 @@
 #import "Rename.glo";
 #import "Regex";
-#import "Terminal/Editor";
+#import "Terminal/Text_Input";
 #import "File_System/Directory";
 #import "File_System/Metadata";
 #import "File_System/Types";
@@ -29,8 +29,8 @@
         root: str;
         files: [..]Rne_Entry;
         options: Rne_Options;
-        search: Terminal_Editor;
-        replacement: Terminal_Editor;
+        search: Terminal_Text_Input;
+        replacement: Terminal_Text_Input;
         regex: Regex;
         regex_pattern: str;
         regex_sensitive: bool;
@@ -327,7 +327,7 @@ Rne_Journal_Entry ::: instance Freeable {
             if file.target.count == 0 || file.problem != .None continue;
             key := rne_path_key(file.target);
             if destinations.get(key) == {
-                case .Some(other);
+                case ?other;
                     file.problem = .Duplicate;
                     app.files[other.*].problem = .Duplicate;
                     key.free();
@@ -336,7 +336,7 @@ Rne_Journal_Entry ::: instance Freeable {
             }
             source_key := rne_path_key(file.path);
             if sources.get(source_key) == {
-                case .Some(existing);
+                case ?existing;
                     existing.* = i;
                     source_key.free();
                 case null;
@@ -354,7 +354,7 @@ Rne_Journal_Entry ::: instance Freeable {
                 defer key.free();
                 vacating := false;
                 if sources.get(key) == {
-                    case .Some(index);
+                    case ?index;
                         vacating = app.files[index.*].problem == .None;
                     else;
                 }
@@ -388,7 +388,7 @@ Rne_Journal_Entry ::: instance Freeable {
         rne_recompute(app);
     }
     rne_request_apply :: (app: *Rne_App) {
-        // Review the current editor contents, including edits since the last preview.
+        // Review the current input contents, including edits since the last preview.
         rne_recompute(app);
         app.command = 0;
         if app.scan_error || !app.regex_valid || app.blocked > 0 {

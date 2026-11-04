@@ -1,7 +1,7 @@
 # rne — Renaming studio
 
 A Glosso port of the sibling [`rne`](../../../rne) bulk renamer, using the
-standard `Command_Line`, `Terminal`, `Terminal/Editor`, `Regex`, `Time`, and `File_System`
+standard `Command_Line`, `Terminal`, `Terminal/Text_Input`, `Regex`, `Time`, and `File_System`
 modules. The application and regex engine are implemented in Glosso; Rust is
 used only by the optional regex comparison harness.
 
@@ -40,7 +40,7 @@ Arguments and help use the standard `Command_Line` specification. Pass option
 values as separate arguments (`--search draft`); short flags can be grouped
 (`-rEs 'draft(\d+)'`). Use `--` before a directory beginning with `-`.
 String option values beginning with `-` (other than a single `-`) are rejected
-by the standard parser; use the interactive editors for those search or
+by the standard parser; use the interactive text inputs for those search or
 replacement strings. Repeating a switch keeps it enabled, and repeated value
 options use their last value. `--files-only` and `--dirs-only` cannot be combined.
 
@@ -56,7 +56,7 @@ options use their last value. `--files-only` and `--dirs-only` cannot be combine
 | Ctrl+R / Ctrl+S / Ctrl+G | Regex / case sensitivity / all versus first match |
 | Ctrl+A / Ctrl+T / Ctrl+E | Cycle name scope / case transform / automatic counter |
 | Ctrl+U / Ctrl+F / Ctrl+D | Recursion / include files / include folders |
-| Ctrl+W / Ctrl+K in an editor | Delete the preceding word / delete to the end |
+| Ctrl+W / Ctrl+K in a text input | Delete the preceding word / delete to the end |
 | F5 | Refresh directory and metadata |
 | F9 / Enter | Review the current edits from any panel; Cancel is initially selected |
 | Left/Right, Enter in review | Choose and activate Cancel or Apply |

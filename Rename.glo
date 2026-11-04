@@ -233,7 +233,7 @@ Rne_Entry ::: instance Freeable {
                         key := field[..equals].trim();
                         text := field[equals + 1..].trim();
                         if from_string(s64, text) == {
-                            case .Some(n);
+                            case ?n;
                                 if key == {
                                     case "start";
                                         start = n;
@@ -345,7 +345,7 @@ Rne_Entry ::: instance Freeable {
         dates: Rne_Dates,
         counter_used: ?*bool = null
     ) -> str {
-        if #pattern.Some(used) = counter_used used.* = false;
+        if #pattern ?used = counter_used used.* = false;
         if search.count == 0 && !options.enumerate && options.casing == .Keep return file.name.clone();
         split := rne_extension(file.name, file.directory);
         stem := file.name[..split];
@@ -362,7 +362,7 @@ Rne_Entry ::: instance Freeable {
             replaced = regex.replace(target, variables, limit, !options.regex);
         } else replaced = target.clone();
         defer replaced.free();
-        if #pattern.Some(used) = counter_used {
+        if #pattern ?used = counter_used {
             // A matching file consumes its number even if it already has the
             // resulting name. Unrelated rows must not offset the first counter.
             used.* = (options.enumerate && !has_counter) ||

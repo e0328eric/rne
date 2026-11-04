@@ -2,7 +2,7 @@
 #import "../Rename.glo";
 #import "../Ui.glo";
 #import "Terminal";
-#import "Terminal/Editor";
+#import "Terminal/Text_Input";
 #import "Command_Line";
 #import "String_Builder";
 #import "Strings/Utf8";
@@ -50,7 +50,7 @@ check_review_keys :: (root: str) {
             app.search.set_text("no matching files");
             rne_recompute(&app);
             check(app.pending == 0, "initial preview has no changes");
-            // Review must pick up editor changes even before a preview refresh.
+            // Review must pick up input changes even before a preview refresh.
             app.search.set_text("2번");
             app.focus = focus;
             app.command = 1;
