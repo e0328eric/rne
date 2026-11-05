@@ -4,19 +4,19 @@
 #import "Io";
 
 #comptime {
-    set_build_options_dc(.do_output = false);
+    set_current_output(false);
     directory := path_dirname(#source_location.filename);
 
-    workspace := Workspace.create("rne");
-    options := workspace.get_build_options();
+    profile := Build_Profile.create("rne");
+    options := profile.options();
 
-    options.output_path = tprint("{}/build", directory);
-    options.output_executable_name = "rne";
-    options.optimization_level = .Very_Optimized;
+    options.output_directory = tprint("{}/build", directory);
+    options.output_name = "rne";
+    options.optimization_level = .O3;
 
-    options.set_build_options(workspace);
+    profile.set_options(options);
 
-    if add_build_file(tprint("{}/main.glo", directory), workspace) == {
+    if compile_file(tprint("{}/main.glo", directory), profile) == {
         case .Ok(log);
             print("{}", log);
         case .Err(error);
